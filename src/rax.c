@@ -201,8 +201,11 @@ raxNode *raxNewNode(size_t children, int datafield) {
 /* Allocate a new rax and return its pointer. On out of memory the function
  * returns NULL. */
 rax *raxNew(void) {
+    // 这里使用zmallo开辟rax结构内存
     rax *rax = rax_malloc(sizeof(*rax));
+    //  内存不足时返回NULL
     if (rax == NULL) return NULL;
+    // 创建头结点 此时树的节点数为1 元素为0
     rax->numele = 0;
     rax->numnodes = 1;
     rax->head = raxNewNode(0,0);
@@ -215,7 +218,10 @@ rax *raxNew(void) {
 }
 
 /* realloc the node to make room for auxiliary data in order
- * to store an item in that node. On out of memory NULL is returned. */
+ * to store an item in that node. On out of memory NULL is returned.
+ * 根据data重新分配一个节点腾出空间
+ *
+ * */
 raxNode *raxReallocForData(raxNode *n, void *data) {
     if (data == NULL) return n; /* No reallocation needed, setting isnull=1 */
     size_t curlen = raxNodeCurrentLength(n);
@@ -493,8 +499,8 @@ static inline size_t raxLowWalk(rax *rax, unsigned char *s, size_t len, raxNode 
                   the searched key. */
     }
     debugnode("Lookup stop node is",h);
-    if (stopnode) *stopnode = h;
-    if (plink) *plink = parentlink;
+    if (stopnode) *stopnode = h; // 匹配停止节点
+    if (plink) *plink = parentlink; // 停止节点父节点指针
     if (splitpos && h->iscompr) *splitpos = j;
     return i;
 }
@@ -515,17 +521,25 @@ int raxGenericInsert(rax *rax, unsigned char *s, size_t len, void *data, void **
     raxNode *h, **parentlink;
 
     debugf("### Insert %.*s with value %p\n", (int)len, s, data);
+    /*
+    raxLowWalk 这个方法用于遍历原有rax 返回i为依次遍历匹配的结果
+    比如 [a]->[bcd]种插入一个ab字符串 返回的是i则为2
+     */
     i = raxLowWalk(rax,s,len,&h,&parentlink,&j,NULL);
 
     /* If i == len we walked following the whole string. If we are not
      * in the middle of a compressed node, the string is either already
      * inserted or this middle node is currently not a key, but can represent
      * our key. We have just to reallocate the node and make space for the
-     * data pointer. */
+     * data pointer.
+     * 如果 i == len 我们就沿着整个字符串行走。如果我们不在压缩节点的中间，则字符串要么已经插入，
+     * 要么这个中间节点当前不是键，但可以代表我们的键。我们只需重新分配节点并为数据指针腾出空间
+     * */
     if (i == len && (!h->iscompr || j == 0 /* not in the middle if j is 0 */)) {
+    // 当前分支为如果完整匹配 且不为压缩节点
         debugf("### Insert: node representing key exists\n");
         /* Make space for the value pointer if needed. */
-        if (!h->iskey || (h->isnull && overwrite)) {
+        if (!h->iskey || (h->isnull && overwrite)) { // 这个overwrite是覆盖原有的value 默认为1
             h = raxReallocForData(h,data);
             if (h) memcpy(parentlink,&h,sizeof(h));
         }

@@ -96,17 +96,18 @@
 
 #define RAX_NODE_MAX_SIZE ((1<<29)-1) // 规定了rax树的最大节点大小。
 typedef struct raxNode {
-    uint32_t iskey:1;     /* Does this node contain a key? */
-    uint32_t isnull:1;    /* Associated value is NULL (don't store it). */
-    uint32_t iscompr:1;   /* Node is compressed. */
-    uint32_t size:29;     /* Number of children, or compressed string len. */
+    uint32_t iskey:1;     /* Does this node contain a key? 节点是否存在key*/
+    uint32_t isnull:1;    /* Associated value is NULL (don't store it). 节点value是否为空*/
+    uint32_t iscompr:1;   /* Node is compressed. 是否是压缩节点*/
+    uint32_t size:29;     /* Number of children, or compressed string len. 如果为压缩节点则保存的是字符串的长度 如果不为压缩节点则保存的是子节点个数*/
     /* Data layout is as follows:
      *
      * If node is not compressed we have 'size' bytes, one for each children
      * character, and 'size' raxNode pointers, point to each child node.
      * Note how the character is not stored in the children but in the
      * edge of the parents:
-     *
+     * 1. 如果节点不为压缩节点 则size存储子节点个数，那么会有size个字符以及size个子节点的指针
+     * 2. 当前节点的字符不是存在于子节点而是父节点的边缘
      * [header iscompr=0][abc][a-ptr][b-ptr][c-ptr](value-ptr?)
      *
      * if node is compressed (iscompr bit is 1) the node has 1 children.
@@ -115,17 +116,19 @@ typedef struct raxNode {
      * nodes linked one after the other, for which only the last one in
      * the sequence is actually represented as a node, and pointed to by
      * the current compressed node.
-     *
+     * 1. 如果是压缩节点(代表只有一个子节点) size存储的是字符串的长度
+     * 2. data的最后会有一个指向子节点的指针
      * [header iscompr=1][xyz][z-ptr](value-ptr?)
      *
      * Both compressed and not compressed nodes can represent a key
      * with associated data in the radix tree at any level (not just terminal
      * nodes).
-     *
+     * 压缩节点和非压缩节点都可以表示关联数据的key
      * If the node has an associated key (iskey=1) and is not NULL
      * (isnull=0), then after the raxNode pointers pointing to the
      * children, an additional value pointer is present (as you can see
      * in the representation above as "value-ptr" field).
+     * 如果节点有关联键 (iskey=1) 并且不为 NULL (isnull=0)，则在指向子节点的 raxNode 指针之后，会出现一个附加值指针（如您在上面的表示中看到的“value-ptr”字段）。
      */
     unsigned char data[];
 } raxNode;
@@ -189,7 +192,9 @@ typedef struct raxIterator {
 extern void *raxNotFound;
 
 /* Exported API. */
+// 创建rax 并返回指针
 rax *raxNew(void);
+
 int raxInsert(rax *rax, unsigned char *s, size_t len, void *data, void **old);
 int raxTryInsert(rax *rax, unsigned char *s, size_t len, void *data, void **old);
 int raxRemove(rax *rax, unsigned char *s, size_t len, void **old);
