@@ -94,7 +94,7 @@
  *
  */
 
-#define RAX_NODE_MAX_SIZE ((1<<29)-1) // 规定了rax树的最大节点大小
+#define RAX_NODE_MAX_SIZE ((1<<29)-1) // 规定了rax树的最大节点大小。
 typedef struct raxNode {
     uint32_t iskey:1;     /* Does this node contain a key? */
     uint32_t isnull:1;    /* Associated value is NULL (don't store it). */
