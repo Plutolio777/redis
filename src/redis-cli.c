@@ -116,6 +116,7 @@ typedef struct {
 static helpEntry *helpEntries;
 static int helpEntriesLen;
 
+// 获取cli version
 static sds cliVersion() {
     sds version;
     version = sdscatprintf(sdsempty(), "%s", REDIS_VERSION);
@@ -528,50 +529,65 @@ static int cliSendCommand(int argc, char **argv, int repeat) {
  * User interface
  *--------------------------------------------------------------------------- */
 
+// 命令行参数解析函数
 static int parseOptions(int argc, char **argv) {
     int i;
-
+    // 遍历argv 由于第0位为 ./redis-cli 因此从第1位开始遍历
     for (i = 1; i < argc; i++) {
-        int lastarg = i==argc-1;
-
+        int lastarg = i==argc-1; // lastarg 位bool类型( i==argc-1 )判断是否已遍历到最后一位
+        // strcmp为string.h中的一个函数用于比较两个字符串是否相等
+        // 如果相等返回false
         if (!strcmp(argv[i],"-h") && !lastarg) {
+            // 如果当前i位置为 -h 且不为最后一个 则需要设置host ip
             sdsfree(config.hostip);
             config.hostip = sdsnew(argv[i+1]);
             i++;
         } else if (!strcmp(argv[i],"-h") && lastarg) {
+            // 如果当前i位置为 -h 但为最后一个 后面没没有值了 打印帮助列表
             usage();
         } else if (!strcmp(argv[i],"--help")) {
+            // 如果当前i位置为 -help 打印帮助列表
             usage();
         } else if (!strcmp(argv[i],"-x")) {
             config.stdinarg = 1;
         } else if (!strcmp(argv[i],"-p") && !lastarg) {
+            // 如果当前i位置为 -p 且不为最后一个 则需要设置 port 端口
+            // atoi函数将string转换为整形
             config.hostport = atoi(argv[i+1]);
             i++;
         } else if (!strcmp(argv[i],"-s") && !lastarg) {
             config.hostsocket = argv[i+1];
             i++;
         } else if (!strcmp(argv[i],"-r") && !lastarg) {
+            // -r 用于设置特殊采样模式中采样次数
+            // atoi函数将string转换为长整形 longlong
             config.repeat = strtoll(argv[i+1],NULL,10);
             i++;
         } else if (!strcmp(argv[i],"-i") && !lastarg) {
+            // 指定特殊采样模式中的采样周期
             double seconds = atof(argv[i+1]);
             config.interval = seconds*1000000;
             i++;
         } else if (!strcmp(argv[i],"-n") && !lastarg) {
+            // 如果当前i位置为 -n 且不为最后一个 则需要设置 database
+            // atoi函数将string转换为整形
             config.dbnum = atoi(argv[i+1]);
             i++;
         } else if (!strcmp(argv[i],"-a") && !lastarg) {
+            // 如果当前i位置为 -n 且不为最后一个 则需要设置 password
             config.auth = argv[i+1];
             i++;
         } else if (!strcmp(argv[i],"--raw")) {
             config.raw_output = 1;
         } else if (!strcmp(argv[i],"--latency")) {
+            // 进入特殊的 latency 模式 该模式会以每秒进行采样 来反应redis的响应延时
             config.latency_mode = 1;
         } else if (!strcmp(argv[i],"-d") && !lastarg) {
             sdsfree(config.mb_delim);
             config.mb_delim = sdsnew(argv[i+1]);
             i++;
         } else if (!strcmp(argv[i],"-v") || !strcmp(argv[i], "--version")) {
+            // 如果当前i位置为 --version或-v  答应版本号
             sds version = cliVersion();
             printf("redis-cli %s\n", version);
             sdsfree(version);
@@ -600,8 +616,11 @@ static sds readArgFromStdin(void) {
     return arg;
 }
 
+// 打印使用说明 如果输入参数有误则会调用这个函数打印帮助列表
 static void usage() {
+    // 获取cli version
     sds version = cliVersion();
+    // 打印帮助列表
     fprintf(stderr,
 "redis-cli %s\n"
 "\n"
@@ -631,7 +650,9 @@ static void usage() {
 "Type \"help\" in interactive mode for information on available commands.\n"
 "\n",
         version);
+    // 清理version内存
     sdsfree(version);
+    // 退出
     exit(1);
 }
 
@@ -772,7 +793,14 @@ static void latencyMode(void) {
     }
 }
 
+// redis-cli入口函数
 int main(int argc, char **argv) {
+    /*
+     * argc int 参数个数
+     * argv 参数数组
+     * 比如 ./redis-cli -h 127.0.0.0 -p 6379 此时传入参数为
+     * argc = 5, argv = -./redis-cli h 127.0.0.0 -p 6379
+     */
     int firstarg;
 
     config.hostip = sdsnew("127.0.0.1");
@@ -791,17 +819,21 @@ int main(int argc, char **argv) {
     config.raw_output = !isatty(fileno(stdout)) && (getenv("FAKETTY") == NULL);
     config.mb_delim = sdsnew("\n");
     cliInitHelp();
-
+    // 解析命令行参数，更新config
     firstarg = parseOptions(argc,argv);
+    // 如果参数解析正常也就是遍历到最后一个参数 那么正好返回的是argc
+    // 尝试argc -= firstarg为0
     argc -= firstarg;
     argv += firstarg;
 
     /* Start in latency mode if appropriate */
+    // 进入特殊采样模式
     if (config.latency_mode) {
         cliConnect(0);
         latencyMode();
     }
 
+    // 进入客户端交互模式
     /* Start interactive mode when no command is provided */
     if (argc == 0) {
         /* Note that in repl mode we don't abort on connection error.

@@ -48,9 +48,11 @@ static void sdsOomAbort(void) {
     abort();
 }
 
+// 开辟sds内存函数
 sds sdsnewlen(const void *init, size_t initlen) {
     struct sdshdr *sh;
-
+    // 分配地址空间 struct长度 + buf[] 保存的char数组长度 + 1 这个1保存了一个结束符
+    // [int len 4][int free 4][char[] buf 字符串实际大小][char 结束符 1]
     sh = zmalloc(sizeof(struct sdshdr)+initlen+1);
 #ifdef SDS_ABORT_ON_OOM
     if (sh == NULL) sdsOomAbort();
@@ -60,10 +62,15 @@ sds sdsnewlen(const void *init, size_t initlen) {
     sh->len = initlen;
     sh->free = 0;
     if (initlen) {
+        // 字符串地址拷贝
         if (init) memcpy(sh->buf, init, initlen);
         else memset(sh->buf,0,initlen);
     }
+    // 赋值结束符
     sh->buf[initlen] = '\0';
+    // 返回字符串的地址指针
+    //       ↓
+    // [3][0][a][b][c][\0]
     return (char*)sh->buf;
 }
 
@@ -71,6 +78,7 @@ sds sdsempty(void) {
     return sdsnewlen("",0);
 }
 
+// 新建一个sds字符串 传入参数是一个普通字符串的 指针其实位置
 sds sdsnew(const char *init) {
     size_t initlen = (init == NULL) ? 0 : strlen(init);
     return sdsnewlen(init, initlen);

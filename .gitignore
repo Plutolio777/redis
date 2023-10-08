@@ -19,3 +19,6 @@ release.h
 src/transfer.sh
 src/configs
 src/redis-server.dSYM
+
+cmake-build-debug-cygwin/
+.idea
