@@ -12,3 +12,5 @@ mkrelease.sh
 release
 myredis.conf
 misc/*
+cmake-build-debug-cygwin/*
+.idea/
