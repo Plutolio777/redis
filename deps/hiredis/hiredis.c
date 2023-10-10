@@ -798,6 +798,7 @@ void __redisSetError(redisContext *c, int type, const sds errstr) {
     }
 }
 
+// redis连接初始化函数
 static redisContext *redisContextInit() {
     redisContext *c = calloc(sizeof(redisContext),1);
     c->err = 0;
@@ -824,6 +825,7 @@ void redisFree(redisContext *c) {
 /* Connect to a Redis instance. On error the field error in the returned
  * context will be set to the return value of the error function.
  * When no set of reply functions is given, the default set will be used. */
+// 创建redis连接实例入口
 redisContext *redisConnect(const char *ip, int port) {
     redisContext *c = redisContextInit();
     c->flags |= REDIS_BLOCK;

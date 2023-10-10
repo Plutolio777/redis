@@ -105,12 +105,13 @@ typedef struct redisReplyObjectFunctions {
 struct redisContext; /* need forward declaration of redisContext */
 
 /* Context for a connection to Redis */
+// redis连接context结构体
 typedef struct redisContext {
-    int fd;
+    int fd; // 连接文件描述符
     int flags;
-    char *obuf; /* Write buffer */
-    int err; /* Error flags, 0 when there is no error */
-    char *errstr; /* String representation of error when applicable */
+    char *obuf; /* Write buffer 写缓冲区 */
+    int err; /* Error flags, 0 when there is no error 错误标志 如果为0表示无错误 否则有错误发生*/
+    char *errstr; /* String representation of error when applicable 错误具体信息*/
 
     /* Function set for reply buildup and reply reader */
     redisReplyObjectFunctions *fn;

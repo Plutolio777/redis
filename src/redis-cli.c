@@ -131,8 +131,12 @@ static sds cliVersion() {
     return version;
 }
 
+// 这个函数是初始化命令提示工具
 static void cliInitHelp() {
+    // 计算命令提示的个数
+    // commandHelp 是一个 commandHelp[] 的总长度/  commandHelp 结构体的大小可以得到个数
     int commandslen = sizeof(commandHelp)/sizeof(struct commandHelp);
+    // 计算命令提示分组的个数
     int groupslen = sizeof(commandGroups)/sizeof(char*);
     int i, len, pos = 0;
     helpEntry tmp;
@@ -291,11 +295,14 @@ static int cliSelect() {
 static int cliConnect(int force) {
     if (context == NULL || force) {
         if (context != NULL)
+            // 判断如果此时连接存在则释放连接
             redisFree(context);
 
         if (config.hostsocket == NULL) {
+            //
             context = redisConnect(config.hostip,config.hostport);
         } else {
+            // 采用unix通信进行连接
             context = redisConnectUnix(config.hostsocket);
         }
 

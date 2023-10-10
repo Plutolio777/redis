@@ -15,7 +15,7 @@ static char *commandGroups[] = {
     "connection",
     "server"
 };
-
+// 预定义的输入提示
 struct commandHelp {
   char *name;
   char *params;

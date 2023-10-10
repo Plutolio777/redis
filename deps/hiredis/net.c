@@ -97,6 +97,7 @@ static int redisSetTcpNoDelay(redisContext *c, int fd) {
     return REDIS_OK;
 }
 
+// 创建TCP连接
 int redisContextConnectTcp(redisContext *c, const char *addr, int port) {
     int s;
     int blocking = (c->flags & REDIS_BLOCK);
