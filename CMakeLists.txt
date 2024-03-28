@@ -110,7 +110,8 @@ set(SRC_SERVER_TMP
         src/mt19937-64.c
         src/crcspeed.c
 )
-set(SRC_SERVER src/server.c ${SRC_SERVER_TMP})
+set(SRC_SERVER src/server.c ${SRC_SERVER_TMP}
+        src/release.h)
 set(SRC_CLI
         src/anet.c
         src/sds.c

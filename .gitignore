@@ -39,3 +39,7 @@ Makefile.dep
 compile_commands.json
 cmake-build-debug-cygwin/*
 /cmake-build-debug-cygwin/
+/cmake-build-debug-cygwin/.cmake/
+/cmake-build-debug-cygwin/CMakeFiles/
+/cmake-build-debug-cygwin/deps/
+/cmake-build-debug-cygwin/src/
