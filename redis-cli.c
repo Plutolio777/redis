@@ -55,6 +55,15 @@ static struct config {
     char *auth;
 } config;
 
+/***
+ * redisCommand
+ * @arg name 命令名称
+ * @arg arity 命令校验的规则 如果大于0则校验参数个数是否相等 如果小于零则校验最小长度
+ * @flags 参数类型
+ *      @REDIS_CMD_INLINE 单行参数 get key
+ *      @REDIS_CMD_BULK 多个参数 setnx key value ttl ...
+ *      @REDIS_CMD_MULTIBULK 多组参数 如 hmset key k1 v1 k2 v2 k3 v3
+ */
 struct redisCommand {
     char *name;
     int arity;
@@ -162,6 +171,12 @@ static struct redisCommand cmdTable[] = {
 static int cliReadReply(int fd);
 static void usage();
 
+/***
+ * lookupCommand
+ * 检查用户输入的命令是否符合redis语法
+ * @param name 命令名称 如 get,set
+ * @return 返回抽象的命令struct @redisCommand 该结构用于校验命令
+ */
 static struct redisCommand *lookupCommand(char *name) {
     int j = 0;
     while(cmdTable[j].name != NULL) {
@@ -307,17 +322,26 @@ static int selectDb(int fd) {
     return 0;
 }
 
+/***
+ * cliSendCommand
+ * 用于想redis-server发送指令
+ * @param argc 参数个数
+ * @param argv 参数数组
+ * @return
+ */
 static int cliSendCommand(int argc, char **argv) {
+    // 获取命令struct信息
     struct redisCommand *rc = lookupCommand(argv[0]);
     int fd, j, retval = 0;
     int read_forever = 0;
     sds cmd;
-
+    // 如果为空则打印command不存在
     if (!rc) {
         fprintf(stderr,"Unknown command '%s'\n",argv[0]);
         return 1;
     }
-
+    // 如果 @rc.arity>0 则校验参数个数
+    // 如果 @rc.arity<0 则校验参数最小个数
     if ((rc->arity > 0 && argc != rc->arity) ||
         (rc->arity < 0 && argc < -rc->arity)) {
             fprintf(stderr,"Wrong number of arguments for '%s'\n",rc->name);
@@ -374,21 +398,28 @@ static int cliSendCommand(int argc, char **argv) {
     }
     return 0;
 }
-
+/***
+ * parseOptions
+ * 解析redis启动参数
+ * @param argc 参数个数
+ * @param argv 参数数组
+ * @return
+ */
 static int parseOptions(int argc, char **argv) {
     int i;
 
     for (i = 1; i < argc; i++) {
         int lastarg = i==argc-1;
-
         if (!strcmp(argv[i],"-h") && !lastarg) {
             char *ip = zmalloc(32);
+            // 解析-h后的域名是否是正确的域名， 如果正确将值赋给@config->ip
             if (anetResolve(NULL,argv[i+1],ip) == ANET_ERR) {
                 printf("Can't resolve %s\n", argv[i]);
                 exit(1);
             }
             config.hostip = ip;
             i++;
+            // 如果最后一个参数是 -h 打印帮助文档
         } else if (!strcmp(argv[i],"-h") && lastarg) {
             usage();
         } else if (!strcmp(argv[i],"-p") && !lastarg) {
@@ -403,6 +434,7 @@ static int parseOptions(int argc, char **argv) {
         } else if (!strcmp(argv[i],"-a") && !lastarg) {
             config.auth = argv[i+1];
             i++;
+            // 不进入交互模式
         } else if (!strcmp(argv[i],"-i")) {
             config.interactive = 1;
         } else {
@@ -451,6 +483,13 @@ static char **convertToSds(int count, char** args) {
   return sds;
 }
 
+/***
+ * prompt
+ * 用于循环接收用户输入的命令
+ * @param line 用户输入缓冲区
+ * @param size 缓冲区大小
+ * @return
+ */
 static char *prompt(char *line, int size) {
     char *retval;
 
@@ -463,12 +502,50 @@ static char *prompt(char *line, int size) {
     return retval;
 }
 
+
+/***
+ * strsep
+ * 补充确实的函数
+ * @param stringp 传入的字符串
+ * @param delim 需要分割的字符
+ * @return
+ */
+char *strsep(char **stringp, const char *delim)
+{
+    char *s;
+    const char *spanp;
+    int c, sc;
+    char *tok;
+    if ((s = *stringp)== NULL)
+        return (NULL);
+    for (tok = s;;) {
+        c = *s++;
+        spanp = delim;
+        do {
+            if ((sc =*spanp++) == c) {
+                if (c == 0)
+                    s = NULL;
+                else
+                    s[-1] = 0;
+                *stringp = s;
+                return (tok);
+            }
+        } while (sc != 0);
+    }
+    /* NOTREACHED */
+}
+
+
+/***
+ * repl
+ * redis的交互模式 也就是我们最常使用的输入命令的模式
+ */
 static void repl() {
     int size = 4096, max = size >> 1, argc;
     char buffer[size];
     char *line = buffer;
     char **ap, *args[max];
-
+    // 如果 -a 则进行密码的校验
     if (config.auth != NULL) {
         char *authargv[2];
 
@@ -476,15 +553,19 @@ static void repl() {
         authargv[1] = config.auth;
         cliSendCommand(2, convertToSds(2, authargv));
     }
-
+    // 这里会循环接收用户输入
     while (prompt(line, size)) {
         argc = 0;
-
+        // strsep用于分割字符串 它会循环返回分割的部分
+        // args位数组 ap为小标 *ap则为下标ap所在的地址
+        // 这里采用指针赋值的方法将 strsep分割后的结果传入字符串数组 args中
         for (ap = args; (*ap = strsep(&line, " \t")) != NULL;) {
             if (**ap != '\0') {
                 if (argc >= max) break;
+                // 如果用户输入 quit或者exit则退出redis-cli
                 if (strcasecmp(*ap,"quit") == 0 || strcasecmp(*ap,"exit") == 0)
                     exit(0);
+                // 数组指针地址+1
                 ap++;
                 argc++;
             }
@@ -513,7 +594,7 @@ int main(int argc, char **argv) {
     firstarg = parseOptions(argc,argv);
     argc -= firstarg;
     argv += firstarg;
-
+    // parseOptions 返回值为正确解析的参数个数 如果与原始个数相等则表示参数解析无问题 进入交互模式
     if (argc == 0 || config.interactive == 1) repl();
 
     argvcopy = convertToSds(argc, argv);
