@@ -421,12 +421,15 @@ static int cliSendCommand(int argc, char **argv, int repeat) {
     return 0;
 }
 
+/*
+ * redis-cli:解析参数传递进来的参数
+ */
 static int parseOptions(int argc, char **argv) {
     int i;
-
+    // 此处i为1是跳过了 redis-cli这个参数
     for (i = 1; i < argc; i++) {
         int lastarg = i==argc-1;
-
+        // strcmp 比较两个字符串是否相等
         if (!strcmp(argv[i],"-h") && !lastarg) {
             char *ip = zmalloc(32);
             if (anetResolve(NULL,argv[i+1],ip) == ANET_ERR) {
@@ -435,6 +438,7 @@ static int parseOptions(int argc, char **argv) {
             }
             config.hostip = ip;
             i++;
+            // 如果-h结尾则弹出帮助
         } else if (!strcmp(argv[i],"-h") && lastarg) {
             usage();
         } else if (!strcmp(argv[i],"-p") && !lastarg) {
@@ -561,12 +565,12 @@ static char **splitArguments(char *line, int *argc) {
         }
     }
 }
-
+// 交互模式
 #define LINE_BUFLEN 4096
 static void repl() {
     int argc, j;
     char *line, **argv;
-
+    // 获取输入结果
     while((line = linenoise("redis> ")) != NULL) {
         if (line[0] != '\0') {
             argv = splitArguments(line,&argc);
@@ -604,19 +608,20 @@ int main(int argc, char **argv) {
     config.pubsub_mode = 0;
     config.raw_output = 0;
     config.auth = NULL;
-
+    // redis解析传参
+    // 处理完传参后 如果正常返回则 first arg == argc
     firstarg = parseOptions(argc,argv);
     argc -= firstarg;
     argv += firstarg;
-
+    // redis认证
     if (config.auth != NULL) {
         char *authargv[2];
-
+        // authargv = ["AUTH", "{password}"]
         authargv[0] = "AUTH";
         authargv[1] = config.auth;
         cliSendCommand(2, convertToSds(2, authargv), 1);
     }
-
+    // 输入 -i 会进入交互模式
     if (argc == 0 || config.interactive == 1) repl();
 
     argvcopy = convertToSds(argc, argv);

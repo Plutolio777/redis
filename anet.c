@@ -103,9 +103,10 @@ int anetTcpKeepAlive(char *err, int fd)
     }
     return ANET_OK;
 }
-
+// 解析host地址是否正确 返回布尔值
 int anetResolve(char *err, char *host, char *ipbuf)
 {
+    // 创建一个socket
     struct sockaddr_in sa;
 
     sa.sin_family = AF_INET;
