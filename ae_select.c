@@ -3,6 +3,7 @@
  * Released under the BSD license. See the COPYING file for more info. */
 
 #include <string.h>
+#include <sys/select.h>
 
 typedef struct aeApiState {
     fd_set rfds, wfds;

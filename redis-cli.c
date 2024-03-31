@@ -55,6 +55,13 @@ static struct config {
     char *auth;
 } config;
 
+/***
+ * redisCommand
+ * @arg name 命令名称
+ * @arg arity 命令需要的参数
+ * @arg flags 参数类型 @REDIS_CMD_MULTIBULK 表示内联一个参数 @REDIS_CMD_BULK:表示多个参数 @REDIS_CMD_INLINE:表示多组参数
+ * 用来抽象redis命令的结构体 提供了redis命令的校验规则
+ */
 struct redisCommand {
     char *name;
     int arity;
@@ -162,9 +169,16 @@ static struct redisCommand cmdTable[] = {
 static int cliReadReply(int fd);
 static void usage();
 
+/***
+ * lookupCommand
+ * @param name 命令名称 如 get 命令
+ * @return 因为用户输入是不统一的 这里返回统一的命令  如 GET/get ---> get comment对象
+ * 用于检查redis的命令是否符合要求 也就是检查用输入的第一个参数是不是符合redis语法
+ */
 static struct redisCommand *lookupCommand(char *name) {
     int j = 0;
     while(cmdTable[j].name != NULL) {
+        // strcasecmp 忽略大小写的比较
         if (!strcasecmp(name,cmdTable[j].name)) return &cmdTable[j];
         j++;
     }
@@ -176,6 +190,7 @@ static int cliConnect(void) {
     static int fd = ANET_ERR;
 
     if (fd == ANET_ERR) {
+        // 连接redis-server返回socket套接字
         fd = anetTcpConnect(err,config.hostip,config.hostport);
         if (fd == ANET_ERR) {
             fprintf(stderr, "Could not connect to Redis at %s:%d: %s", config.hostip, config.hostport, err);
@@ -186,7 +201,14 @@ static int cliConnect(void) {
     return fd;
 }
 
+/***
+ * cliReadLine
+ * 读取redis-server 创建新sds
+ * @param fd redis-server socket
+ * @return
+ */
 static sds cliReadLine(int fd) {
+    // 分配一个sds内存空间
     sds line = sdsempty();
 
     while(1) {
@@ -197,6 +219,7 @@ static sds cliReadLine(int fd) {
         if (ret == -1) {
             sdsfree(line);
             return NULL;
+            // redis-server返回都是以\n结尾
         } else if ((ret == 0) || (c == '\n')) {
             break;
         } else {
@@ -206,12 +229,22 @@ static sds cliReadLine(int fd) {
     return sdstrim(line,"\r\n");
 }
 
+/***
+ * cliReadSingleLineReply
+ * 读取redis-server的消息如果成功则打印在控制台返回0 如果失败返回1
+ * 如果是quite命令则不需要打印结果
+ * @param fd redis-server socket
+ * @param quiet 用来控制是否需要将返回打印在控制台 1不打印 0打印
+ * @return int 为0表示成功 1读取内容为NULL
+ */
 static int cliReadSingleLineReply(int fd, int quiet) {
+    // 从redis-server读取当行消息
     sds reply = cliReadLine(fd);
 
     if (reply == NULL) return 1;
     if (!quiet)
         printf("%s\n", reply);
+    // 释放sds内存
     sdsfree(reply);
     return 0;
 }
@@ -287,19 +320,28 @@ static int cliReadReply(int fd) {
     }
 }
 
+/***
+ * selectDb
+ * 通过-n指定dbNum时redis-cli帮我们发送 select dbNum选择数据库
+ * @param fd @redis-server socket
+ * @return 执行结果 1指令执行成功 0表示执行失败
+ */
 static int selectDb(int fd) {
     int retval;
     sds cmd;
     char type;
-
+    // 初次连接redis-server的初始数据库为0 不需要切换DB 直接返回
     if (config.dbnum == 0)
         return 0;
 
+    // 这里是当我们通过-n来指定db时redis会帮我们发送一个 select dbNum 命令来选择数据库
+    // 和我们进入redis-cli之后输入select dbNum是同理
     cmd = sdsempty();
     cmd = sdscatprintf(cmd,"SELECT %d\r\n",config.dbnum);
     anetWrite(fd,cmd,sdslen(cmd));
     anetRead(fd,&type,1);
     if (type <= 0 || type != '+') return 1;
+    // 此方法会读取redis执行命令后的结果并打印在控制台
     retval = cliReadSingleLineReply(fd,1);
     if (retval) {
         return retval;
@@ -317,39 +359,60 @@ static int cliSendCommand(int argc, char **argv) {
         fprintf(stderr,"Unknown command '%s'\n",argv[0]);
         return 1;
     }
-
+    // redis命令的校验规则:
+    // 如果 @rc.arity 大于零则校验参数个数
+    // 如果 @rc.arity 小于零则校验参数的最小长度
     if ((rc->arity > 0 && argc != rc->arity) ||
         (rc->arity < 0 && argc < -rc->arity)) {
             fprintf(stderr,"Wrong number of arguments for '%s'\n",rc->name);
             return 1;
     }
+    // 进入redis 监控模式
     if (!strcasecmp(rc->name,"monitor")) read_forever = 1;
+    // 建立与redis-server的连接 获取socket
     if ((fd = cliConnect()) == -1) return 1;
-
-    /* Select db number */
+    // select db
     retval = selectDb(fd);
     if (retval) {
         fprintf(stderr,"Error setting DB num\n");
         return 1;
     }
-
+    //
     while(config.repeat--) {
-        /* Build the command to send */
+        // 组装redis命令 首先创建一个空sds
         cmd = sdsempty();
+        // 类似于 mset k1 v1 k2 v2 命令组装 @REDIS_CMD_MULTIBULK 表示多个key多个value
+        // 输入mset k1 v1 k2 v2
+        //          |
+        //          |
+        //          V
+        // *7\r\n$4mset\r\n$2k1\r\n$2v1\r\n$2k2\r\n$2v2\r\n$2k3\r\n$2v3\r\n
         if (rc->flags & REDIS_CMD_MULTIBULK) {
+            // *{参数总个数}\r\n
             cmd = sdscatprintf(cmd,"*%d\r\n",argc);
             for (j = 0; j < argc; j++) {
+                // ${参数长度}\r\n{参数字面量}\r\n
                 cmd = sdscatprintf(cmd,"$%lu\r\n",
                     (unsigned long)sdslen(argv[j]));
                 cmd = sdscatlen(cmd,argv[j],sdslen(argv[j]));
                 cmd = sdscatlen(cmd,"\r\n",2);
             }
+
         } else {
+            // 如果类型为 REDIS_CMD_INLINE 则命令之间用空格隔开如
+            // get k1 -----> get k1\r\n
+            // 如果类型为REDIS_CMD_BULK 则最后一个参数之前需要加上参数的长度
+            // lpush k1 v1 -----> lpush k1 2\r\nv1
             for (j = 0; j < argc; j++) {
+                // 如果不为首个则加一个空格
                 if (j != 0) cmd = sdscat(cmd," ");
+                // 类似于 lpush k v1 v2 v3  命令组装 @REDIS_CMD_BULK 一个key多个value
+                // cmd = cmd + {参数长度}
                 if (j == argc-1 && rc->flags & REDIS_CMD_BULK) {
                     cmd = sdscatprintf(cmd,"%lu",
                         (unsigned long)sdslen(argv[j]));
+                // 类似于 get key  命令组装 @REDIS_CMD_INLINE 一个key一个value
+                // cmd = cmd {参数字面量}
                 } else {
                     cmd = sdscatlen(cmd,argv[j],sdslen(argv[j]));
                 }
@@ -359,10 +422,12 @@ static int cliSendCommand(int argc, char **argv) {
                 cmd = sdscatlen(cmd,argv[argc-1],sdslen(argv[argc-1]));
                 cmd = sdscatlen(cmd,"\r\n",2);
             }
+            printf("%s", cmd);
         }
         anetWrite(fd,cmd,sdslen(cmd));
         sdsfree(cmd);
 
+        // 如果输入monitor进入监控模式 将循环读取redis的内容打印在控制台
         while (read_forever) {
             cliReadSingleLineReply(fd,0);
         }
@@ -403,6 +468,7 @@ static int parseOptions(int argc, char **argv) {
         } else if (!strcmp(argv[i],"-a") && !lastarg) {
             config.auth = argv[i+1];
             i++;
+            // -i 表示不进入交互模式
         } else if (!strcmp(argv[i],"-i")) {
             config.interactive = 1;
         } else {
@@ -450,17 +516,55 @@ static char **convertToSds(int count, char** args) {
 
   return sds;
 }
-
+/***
+ * prompt
+ * 用于获取用户输入的内容并返回字符串
+ * @param line 输入缓冲区
+ * @param size 输入缓冲区最大值
+ * @return 返回用户输入的内容
+ */
 static char *prompt(char *line, int size) {
     char *retval;
 
     do {
         printf(">> ");
+
+        // 读取输入
         retval = fgets(line, size, stdin);
     } while (retval && *line == '\n');
     line[strlen(line) - 1] = '\0';
 
     return retval;
+}
+/***
+ * strsep
+ * @param stringp 字符串引用
+ * @param delim 需要分割的字符
+ * @return
+ */
+char *strsep(char **stringp, const char *delim)
+{
+    char *s;
+    const char *spanp;
+    int c, sc;
+    char *tok;
+    if ((s = *stringp)== NULL)
+        return (NULL);
+    for (tok = s;;) {
+        c = *s++;
+        spanp = delim;
+        do {
+            if ((sc =*spanp++) == c) {
+                if (c == 0)
+                    s = NULL;
+                else
+                    s[-1] = 0;
+                *stringp = s;
+                return (tok);
+            }
+        } while (sc != 0);
+    }
+    /* NOTREACHED */
 }
 
 static void repl() {
@@ -479,10 +583,18 @@ static void repl() {
 
     while (prompt(line, size)) {
         argc = 0;
-
+        // strsep 使用来进行字符串分割它的原理是 将字符串中的指定字符替换成\0 并循环获取分割的值
+        // strsep(&line, " \t")
+        //     ['a','b',' ','c','d','\t' ,'d'] ----->
+        //     ['a','b']
+        //     ['c','d']
+        //     ['d']
+        //     args是一个数组 ap是数组中的指针 通过改变ap值 将结果赋值给*ap可以
         for (ap = args; (*ap = strsep(&line, " \t")) != NULL;) {
+            // args[0] != '\0'
             if (**ap != '\0') {
                 if (argc >= max) break;
+                // 如果遇到退出则终止进程
                 if (strcasecmp(*ap,"quit") == 0 || strcasecmp(*ap,"exit") == 0)
                     exit(0);
                 ap++;
@@ -499,6 +611,7 @@ static void repl() {
 }
 
 int main(int argc, char **argv) {
+    printf("hello");
     int firstarg;
     char **argvcopy;
     struct redisCommand *rc;
