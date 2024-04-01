@@ -205,6 +205,7 @@ static int cliConnect(void) {
 
 /***
  * cliReadLine
+ * 读取socket buffer中的消息直到\n
  * 读取redis-server 创建新sds
  * @param fd redis-server socket
  * @return
@@ -216,7 +217,7 @@ static sds cliReadLine(int fd) {
     while(1) {
         char c;
         ssize_t ret;
-
+        // 从buffer中读取1字节数据放入c中 ret=0表示buffer为空
         ret = read(fd,&c,1);
         if (ret == -1) {
             sdsfree(line);
@@ -240,7 +241,7 @@ static sds cliReadLine(int fd) {
  * @return int 为0表示成功 1读取内容为NULL
  */
 static int cliReadSingleLineReply(int fd, int quiet) {
-    // 从redis-server读取当行消息
+    // 从redis-server读取单行消息
     sds reply = cliReadLine(fd);
 
     if (reply == NULL) return 1;
@@ -251,27 +252,40 @@ static int cliReadSingleLineReply(int fd, int quiet) {
     return 0;
 }
 
+/***
+ * cliReadBulkReply
+ * 读取多个char的消息
+ * @param fd
+ * @return
+ */
 static int cliReadBulkReply(int fd) {
+    // 当消息头为*时会进入这个方法 *后面跟的是整个参数的长度 所以这里会读取reply长度
     sds replylen = cliReadLine(fd);
     char *reply, crlf[2];
     int bulklen;
-
+    // 如果argc为NULL则返回1表示读取错误
     if (replylen == NULL) return 1;
+    // char转为int
     bulklen = atoi(replylen);
+    // 表示无参数 打印nil并返回读取成功
     if (bulklen == -1) {
         sdsfree(replylen);
         printf("(nil)\n");
         return 0;
     }
+    // 分配argc字节内存用于存放回复数据
     reply = zmalloc(bulklen);
+    // 将buffer内容读取到reply中
     anetRead(fd,reply,bulklen);
     anetRead(fd,crlf,2);
+    // 将reply中的内容输入到stdout流（会打印到控制台）
     if (bulklen && fwrite(reply,bulklen,1,stdout) == 0) {
         zfree(reply);
         return 1;
     }
     if (isatty(fileno(stdout)) && reply[bulklen-1] != '\n')
         printf("\n");
+    // 释放内存
     zfree(reply);
     return 0;
 }
@@ -298,22 +312,38 @@ static int cliReadMultiBulkReply(int fd) {
     return 0;
 }
 
+
+/***
+ * cliReadReply
+ * 发送消息后处理server的回复消息
+ * @param fd server socket
+ * @return 返回1表示命令执行失败 0表示命令执行成功
+ */
 static int cliReadReply(int fd) {
     char type;
-
+    // 从fd socket buffer中读取1位 首位为返回值类型
     if (anetRead(fd,&type,1) <= 0) exit(1);
+    printf("接收到的消息类型是%s\n", &type);
     switch(type) {
+    // 错误处理
     case '-':
         printf("(error) ");
+        //
         cliReadSingleLineReply(fd,0);
         return 1;
+    // 读取当行消息 cliReadSingleLineReply 会读取socket中所有的消息直到\n
+    // 如 set a1 v1 返回的消息类型是+ 返回的是OK
     case '+':
         return cliReadSingleLineReply(fd,0);
+    // 读取单行integer类型的消息
     case ':':
         printf("(integer) ");
         return cliReadSingleLineReply(fd,0);
+    // 读取多个消息
+    // 如lrange test 0 -1 读取的消息类型是${长度}\r\n{参数}\r\n
     case '$':
         return cliReadBulkReply(fd);
+    // 读取多组消息 *后面跟数字其实就是表示后面有几组 $开头的数据需要重复处理
     case '*':
         return cliReadMultiBulkReply(fd);
     default:
@@ -434,7 +464,9 @@ static int cliSendCommand(int argc, char **argv) {
             }
             printf("%s", cmd);
         }
-        anetWrite(fd,cmd,sdslen(cmd));
+        // 将sds写入socket发送到redis-server
+        anetWrite(fd, cmd, sdslen(cmd));
+        // 释放sds内存
         sdsfree(cmd);
 
         // 如果输入monitor进入监控模式 将循环读取redis的内容打印在控制台
