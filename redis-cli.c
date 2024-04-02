@@ -70,6 +70,11 @@ struct redisCommand {
     int flags;
 };
 
+/**
+ * redisCommand
+ * 定义redis中合法的指令以及一些参数校验规则，类型
+ * @arg cmdTable
+ */
 static struct redisCommand cmdTable[] = {
     {"auth",2,REDIS_CMD_INLINE},
     {"get",2,REDIS_CMD_INLINE},
@@ -187,6 +192,11 @@ static struct redisCommand *lookupCommand(char *name) {
     return NULL;
 }
 
+/**
+ * cliConnect
+ * 获取redis-server套接字
+ * @return
+ */
 static int cliConnect(void) {
     char err[ANET_ERR_LEN];
     static int fd = ANET_ERR;

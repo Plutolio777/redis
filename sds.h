@@ -33,8 +33,18 @@
 
 #include <sys/types.h>
 
+// sds实际上是指向struct sdshdr->buf 所以它是一个char*类型
 typedef char *sds;
 
+/**
+ * sdshdr
+ * sdshdr中包含两个long供16字节，sizeof计算buf的长度会是0 所以sizeof计算的长度固定是16字节
+ * sds 实际上是指向buf的指针，这样的话可以使用o(1)时间复杂度就可以获得以及sds的长度
+ * 通过 (void*)(sds - (sizeof(struct sdshdr))) 就可以获得sdshdr的指针从而访问len和free了
+ * @arg len 当前字符长度
+ * @arg free 当前剩余容量
+ * @arg char buffer 字符数组
+ */
 struct sdshdr {
     long len;
     long free;

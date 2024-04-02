@@ -36,50 +36,105 @@
 #include <stdarg.h>
 #include <string.h>
 #include <ctype.h>
+// malloc/free用于开辟和分配内存
 #include "zmalloc.h"
 
+/***
+ * sdsOomAbort
+ * 当无法分配sds内存时会抛出OOM异常
+ */
 static void sdsOomAbort(void) {
     fprintf(stderr,"SDS: Out Of Memory (SDS_ABORT_ON_OOM defined)\n");
     abort();
 }
 
+/***
+ * sdsnewlen
+ * 创建一个指定长度的sds字符串 或者根据指定的字符串创建sds
+ * @param init 源字符数组
+ * @param initlen 源字符数组长度
+ * @return 返回一个sds字符串
+ */
 sds sdsnewlen(const void *init, size_t initlen) {
+    // 定义一个sdshdr struct指针
     struct sdshdr *sh;
-
+    // 分配内存 大小为 sizeof(struct sdshdr)+initlen+1 initlen是字符串长度
+    // +1是因为还需要多存一个结束符 \0
     sh = zmalloc(sizeof(struct sdshdr)+initlen+1);
+
 #ifdef SDS_ABORT_ON_OOM
     if (sh == NULL) sdsOomAbort();
 #else
     if (sh == NULL) return NULL;
 #endif
+    // 填入初始长度
     sh->len = initlen;
+    // 因为是按照字符串长度分配的空间 一次free剩余空间直接给0即可
     sh->free = 0;
+
     if (initlen) {
+        // 将init中的内容copy到buf中
         if (init) memcpy(sh->buf, init, initlen);
+        // 执行失败的话则清除数组内容
         else memset(sh->buf,0,initlen);
     }
+    // 填入终止符
     sh->buf[initlen] = '\0';
+    // 将buf地址返回 时间上就是返回sds 因为sds是char*
     return (char*)sh->buf;
 }
 
+/***
+ * sdsempty
+ * 创建一个空sds {0,0,{}}
+ * @return 返回一个空sds
+ */
 sds sdsempty(void) {
+    // 调用sdsnewlen时只需要传入空串就可以获得一个空的sds
     return sdsnewlen("",0);
 }
 
+/***
+ * sdsnew
+ * 根据字符串创建sds， 实际上是在调用sdsnewlen之前计算了一下字符串长度
+ * @param init 源字符数组
+ * @return 返回sds
+ */
 sds sdsnew(const char *init) {
+    // 计算字符数组长度 传入sdsnewlen方法中
     size_t initlen = (init == NULL) ? 0 : strlen(init);
     return sdsnewlen(init, initlen);
 }
 
+/**
+ * sdslen
+ * 获取sds的长度 经典方法通过指针移位获得sdshdr指针获取长度
+ * @param s sds字符串
+ * @return 返回sds字符串长度
+ */
 size_t sdslen(const sds s) {
+    //sdshdr 结构体长度固定为两个long 所以当一个sds减去 struct时会获得结构体指针
+    //从而可以用复杂度o(1)获取长度 这也是redis使用自定义sds的好处之一
+    //这段代码是经典->如果从一个sds获得sdshdr
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
     return sh->len;
 }
 
+/**
+ * sdsdup
+ * 复制sds
+ * @param s 源sds
+ * @return 获得新的sds
+ */
 sds sdsdup(const sds s) {
+    // 通过sdslen获取一下sds长度就行了 只要理解sds也是char*就没啥东西
     return sdsnewlen(s, sdslen(s));
 }
-
+/**
+ * sdsfree
+ * 释放sds内存空间没啥好说的
+ * @param s 需要释放内存的sds
+ */
 void sdsfree(sds s) {
     if (s == NULL) return;
     zfree(s-sizeof(struct sdshdr));
