@@ -58,7 +58,7 @@ redis-benchmark: $(BENCHOBJ)
 	$(CC) -o $(BENCHPRGNAME) $(CCOPT) $(DEBUG) $(BENCHOBJ)
 
 redis-cli: $(CLIOBJ)
-	$(CC) -o $(CLIPRGNAME) $(CCOPT) $(DEBUG) $(CLIOBJ)
+	$(CC) -o $(CLIPRGNAME) $(CCOPT)  $(CLIOBJ)
 
 redis-check-dump: $(CHECKDUMPOBJ)
 	$(CC) -o $(CHECKDUMPPRGNAME) $(CCOPT) $(DEBUG) $(CHECKDUMPOBJ)
