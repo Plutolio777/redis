@@ -139,53 +139,96 @@ void sdsfree(sds s) {
     if (s == NULL) return;
     zfree(s-sizeof(struct sdshdr));
 }
-
+/**
+ * sdsavail
+ * 获取sds的剩余容量
+ * @param s sds对象
+ * @return 返回剩余容量
+ */
 size_t sdsavail(sds s) {
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
     return sh->free;
 }
-
+/**
+ * sdsupdatelen
+ * 更新sds的长度
+ * @param s sds对象
+ */
 void sdsupdatelen(sds s) {
+    // 获取sdshdr结构体指针
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
+    // 使用原生函数计算字符串长度
     int reallen = strlen(s);
+    // 调整长度和容量
     sh->free += (sh->len-reallen);
     sh->len = reallen;
 }
 
+/**
+ *
+ * 此方法为修改sds时需要确认是否容量充足 如果容量不够则需要进行扩容
+ * @param s 扩容前的sds
+ * @param addlen 新增加的长度
+ * @return 扩容后的sds
+ */
 static sds sdsMakeRoomFor(sds s, size_t addlen) {
     struct sdshdr *sh, *newsh;
+    // 获取sds的剩余空间
     size_t free = sdsavail(s);
     size_t len, newlen;
-
+    // 如果容量充足 返回sds
     if (free >= addlen) return s;
+    // 获得sds 长度
     len = sdslen(s);
+
     sh = (void*) (s-(sizeof(struct sdshdr)));
+    // 扩容 目标容量为当前长度加新增长度 x 2
     newlen = (len+addlen)*2;
+    // 重新分配内存
     newsh = zrealloc(sh, sizeof(struct sdshdr)+newlen+1);
 #ifdef SDS_ABORT_ON_OOM
     if (newsh == NULL) sdsOomAbort();
 #else
     if (newsh == NULL) return NULL;
 #endif
-
+    // 重新计算剩余容量 此处只是扩容 因此len是没有改变的
     newsh->free = newlen - len;
+    // 返回sds
     return newsh->buf;
 }
 
+/**
+ * sdscatlen
+ * sds的拼接方法 目标字符串用头指针和长度表示
+ * @param s 源sds
+ * @param t 目标字符串指针
+ * @param len 目标字符串长度
+ * @return
+ */
 sds sdscatlen(sds s, void *t, size_t len) {
     struct sdshdr *sh;
     size_t curlen = sdslen(s);
-
+    // 是否需要扩容
     s = sdsMakeRoomFor(s,len);
     if (s == NULL) return NULL;
     sh = (void*) (s-(sizeof(struct sdshdr)));
+    // 直接进行内存拷贝，因为已经做过容量检查所以可以直接操作内存
     memcpy(s+curlen, t, len);
+    // 重新调整长度和剩余大小
     sh->len = curlen+len;
     sh->free = sh->free-len;
     s[curlen+len] = '\0';
     return s;
 }
 
+/**
+ *
+ * sds的拼接方法 目标字符串用字符数组表示
+ * 直接调用上面方法
+ * @param s 源sds
+ * @param t 目标字符串指针
+ * @return 拼接之后的sds
+ */
 sds sdscat(sds s, char *t) {
     return sdscatlen(s, t, strlen(t));
 }
