@@ -232,28 +232,62 @@ sds sdscatlen(sds s, void *t, size_t len) {
 sds sdscat(sds s, char *t) {
     return sdscatlen(s, t, strlen(t));
 }
-
+/**
+ * sdscpylen
+ * 用提供的字符串直接覆盖sds中的内容
+ * @param s 目标sds
+ * @param t 需要覆盖的字符串
+ * @param len 需要覆盖字符串的长度
+ * @return 返回一个新的sds
+ */
 sds sdscpylen(sds s, char *t, size_t len) {
+    // 获取字符串总长度
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
     size_t totlen = sh->free+sh->len;
-
+    // 如果复制字符串的长度大于当前sds的长度 则需要扩容
     if (totlen < len) {
         s = sdsMakeRoomFor(s,len-sh->len);
         if (s == NULL) return NULL;
         sh = (void*) (s-(sizeof(struct sdshdr)));
         totlen = sh->free+sh->len;
     }
+    // 直接复制内容
     memcpy(s, t, len);
+    // 调整字符串长度已经填充结尾符
     s[len] = '\0';
     sh->len = len;
     sh->free = totlen-len;
     return s;
 }
 
+/**
+ * sdscpy
+ * sds的拼接方法 目标字符串用字符数组表示
+ * 直接调用上面方法
+ * @param s 目标sds
+ * @param t 需要覆盖的字符串
+ * @return 返回一个新的sds
+ */
 sds sdscpy(sds s, char *t) {
     return sdscpylen(s, t, strlen(t));
 }
 
+/**
+ *
+ * 这里出现了几个原生库中的结构和函数
+ * @va_list 是在C语言中解决变参问题的一组宏，变参问题是指参数的个数不定，
+ * 可以是传入一个参数也可以是多个;可变参数中的每个参数的类型可以不同,
+ * 也可以相同;可变参数的每个参数并没有实际的名称与之相对应，用起来是很灵活。
+ * @va_list表示可变参数列表类型，实际上就是一个char指针fmt。
+ * 使用@vsnprintf()用于向一个字符串缓冲区打印格式化字符串，且可以限定打印的格式化字符串的最大长度。
+ * 这个方式是用来进行格式化打印sds的
+ * 具体使用方法可以参见sdscatprintf_test.c
+ * cmd = sdscatprintf(cmd, "my name is %s", "boby") --> sds("my name is boby")
+ * @param s
+ * @param fmt
+ * @param ...
+ * @return
+ */
 sds sdscatprintf(sds s, const char *fmt, ...) {
     va_list ap;
     char *buf, *t;
@@ -267,7 +301,9 @@ sds sdscatprintf(sds s, const char *fmt, ...) {
         if (buf == NULL) return NULL;
 #endif
         buf[buflen-2] = '\0';
+        // 使用 用@va_start宏初始化变量刚定义的va_list变量；
         va_start(ap, fmt);
+        // 将ap中的可变参数 按照fmt中的模板进行格式化输出到buf中
         vsnprintf(buf, buflen, fmt, ap);
         va_end(ap);
         if (buf[buflen-2] != '\0') {
@@ -277,6 +313,7 @@ sds sdscatprintf(sds s, const char *fmt, ...) {
         }
         break;
     }
+    // 将buf中的内容拼接到sds中
     t = sdscat(s, buf);
     zfree(buf);
     return t;

@@ -18,13 +18,17 @@ OBJ = adlist.o ae.o anet.o dict.o redis.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort
 BENCHOBJ = ae.o anet.o redis-benchmark.o sds.o adlist.o zmalloc.o
 CLIOBJ = anet.o sds.o adlist.o redis-cli.o zmalloc.o
 CHECKDUMPOBJ = redis-check-dump.o lzf_c.o lzf_d.o
+PTESTOBG = sdscatprintf_test.o sds.o zmalloc.o
+
 
 PRGNAME = redis-server
 BENCHPRGNAME = redis-benchmark
 CLIPRGNAME = redis-cli
 CHECKDUMPPRGNAME = redis-check-dump
+PTESTPRGNAME = sdscatprintf_test
 
-all: redis-server redis-benchmark redis-cli redis-check-dump
+
+all: redis-server redis-benchmark redis-cli redis-check-dump sdscatprintf_test
 
 # Deps (use make dep to generate this)
 adlist.o: adlist.c adlist.h zmalloc.h
@@ -45,6 +49,7 @@ redis.o: redis.c fmacros.h config.h redis.h ae.h sds.h anet.h dict.h \
 sds.o: sds.c sds.h zmalloc.h
 zipmap.o: zipmap.c zmalloc.h
 zmalloc.o: zmalloc.c config.h
+sdscatprintf_test.o:  sdscatprintf_test.c sds.h zmalloc.h
 
 redis-server: $(OBJ)
 	$(CC) -o $(PRGNAME) $(CCOPT) $(DEBUG) $(OBJ)
@@ -59,6 +64,9 @@ redis-benchmark: $(BENCHOBJ)
 
 redis-cli: $(CLIOBJ)
 	$(CC) -o $(CLIPRGNAME) $(CCOPT)  $(CLIOBJ)
+
+sdscatprintf_test: $(PTESTOBG)
+	$(CC) -o $(PTESTPRGNAME) $(CCOPT)  $(PTESTOBG)
 
 redis-check-dump: $(CHECKDUMPOBJ)
 	$(CC) -o $(CHECKDUMPPRGNAME) $(CCOPT) $(DEBUG) $(CHECKDUMPOBJ)
