@@ -283,10 +283,10 @@ sds sdscpy(sds s, char *t) {
  * 这个方式是用来进行格式化打印sds的
  * 具体使用方法可以参见sdscatprintf_test.c
  * cmd = sdscatprintf(cmd, "my name is %s", "boby") --> sds("my name is boby")
- * @param s
- * @param fmt
- * @param ...
- * @return
+ * @param s 目标sds
+ * @param fmt 字符串格式
+ * @param ... 字符串参数
+ * @return 拼接后的字符串
  */
 sds sdscatprintf(sds s, const char *fmt, ...) {
     va_list ap;
@@ -300,12 +300,16 @@ sds sdscatprintf(sds s, const char *fmt, ...) {
 #else
         if (buf == NULL) return NULL;
 #endif
+        //在倒数第二个位置设置终止符
         buf[buflen-2] = '\0';
         // 使用 用@va_start宏初始化变量刚定义的va_list变量；
         va_start(ap, fmt);
         // 将ap中的可变参数 按照fmt中的模板进行格式化输出到buf中
         vsnprintf(buf, buflen, fmt, ap);
         va_end(ap);
+        // 如果buf长度超了则会导致倒数第二位不是终止符
+        // 所以要增大buflen重新赋值
+        // 因为字符串格式化不太好计算生成后的长度 因此采用这种方式来处理
         if (buf[buflen-2] != '\0') {
             zfree(buf);
             buflen *= 2;
@@ -318,29 +322,58 @@ sds sdscatprintf(sds s, const char *fmt, ...) {
     zfree(buf);
     return t;
 }
-
+/**
+ *
+ * 去除sds两边的 所有 cset指定的字符
+ * @param s 目标sds
+ * @param cset 指定需要去除的字符
+ * @return 返回处理后的sds
+ */
 sds sdstrim(sds s, const char *cset) {
+    // 获取sds头指针
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
     char *start, *end, *sp, *ep;
     size_t len;
-
+    // 指针指向sds头
     sp = start = s;
+
+    // 指针指向sds尾
     ep = end = s+sdslen(s)-1;
+    //       <- ep-sp ->
+    //-->   sp          ep <---
+    //       |          |
+    //       V          V
+    // "     abcdaaaaaaae   "
+    // 从头遍历找到不等于cset的位置 sp
     while(sp <= end && strchr(cset, *sp)) sp++;
+    // 从尾指针遍历找到不等于cset的位置 ep
     while(ep > start && strchr(cset, *ep)) ep--;
+    // 如果sp > ep 说明字符串左边不需要清理,
     len = (sp > ep) ? 0 : ((ep-sp)+1);
+    // 如果sp不为buf的头指针位置 则将sds从左边平移到指针头
     if (sh->buf != sp) memmove(sh->buf, sp, len);
+    // 右边的缓存不需要清理 只需要结尾加入终止符即可
     sh->buf[len] = '\0';
+    //重新计算长度和容量
     sh->free = sh->free+(sh->len-len);
     sh->len = len;
     return s;
 }
 
+/**
+ *
+ * 获取sds中从start到end的内容获取一个新的sds
+ * @param s 目标sds
+ * @param start 起始位置
+ * @param end 结束为止
+ * @return 返回修改后的sds
+ */
 sds sdsrange(sds s, long start, long end) {
     struct sdshdr *sh = (void*) (s-(sizeof(struct sdshdr)));
     size_t newlen, len = sdslen(s);
 
     if (len == 0) return s;
+    // 如果start小于0则从尾部获取 如 -1 则start=len-1为sds最后一位
     if (start < 0) {
         start = len+start;
         if (start < 0) start = 0;
@@ -349,6 +382,7 @@ sds sdsrange(sds s, long start, long end) {
         end = len+end;
         if (end < 0) end = 0;
     }
+    // 计算sds新长度
     newlen = (start > end) ? 0 : (end-start)+1;
     if (newlen != 0) {
         if (start >= (signed)len) start = len-1;
@@ -357,33 +391,51 @@ sds sdsrange(sds s, long start, long end) {
     } else {
         start = 0;
     }
+    // 通过平移来获得新的字符串
     if (start != 0) memmove(sh->buf, sh->buf+start, newlen);
+    // 加入终止符和重新计算长度
     sh->buf[newlen] = 0;
     sh->free = sh->free+(sh->len-newlen);
     sh->len = newlen;
     return s;
 }
 
+/*
+ * sdstolower
+ * 将sds全变为小写 遍历字符数组调用tolower即可
+ */
 void sdstolower(sds s) {
     int len = sdslen(s), j;
 
     for (j = 0; j < len; j++) s[j] = tolower(s[j]);
 }
-
+/*
+ * sdstolower
+ * 将sds全变为大写 遍历字符数组调用tolower即可
+ */
 void sdstoupper(sds s) {
     int len = sdslen(s), j;
 
     for (j = 0; j < len; j++) s[j] = toupper(s[j]);
 }
-
+/**
+ *
+ * 比较字符串大小
+ * @param s1
+ * @param s2
+ * @return
+ */
 int sdscmp(sds s1, sds s2) {
     size_t l1, l2, minlen;
     int cmp;
-
+    // 计算两个sds长度
     l1 = sdslen(s1);
     l2 = sdslen(s2);
+    // 计算两个最小长度
     minlen = (l1 < l2) ? l1 : l2;
+    // 调用系统函数比较s1 s2 两个字符串交集大小
     cmp = memcmp(s1,s2,minlen);
+    // 如果前minlen都相等 则返回长度更大的那个
     if (cmp == 0) return l1-l2;
     return cmp;
 }

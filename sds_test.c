@@ -1,22 +1,37 @@
 
+#include "sds.h"
 #include "stdio.h"
-typedef char *sds;
+#include <string.h>
+int main(){
 
+    // 1.sdsnewlen
+    char *t  =  "sds";
+    size_t len = strlen(t);
+    printf("sdsnewlen-> %s\n", sdsnewlen(t, len));
+    // 2.sdsnew
+    printf("sdsnew-> %s\n", sdsnew(t));
 
-struct sdshdr {
-    long len;
-    long free;
-    char buf[]
+    // 3.sdslen 15 中文
+    printf("sdslen-> %zu\n",sdslen(sdsnew(t)));
+
+    // 3.sdsavail 0 sdsnew调用的是sdsnewlen所以空间大小是按照len创建的 所以free为0
+    printf("sdsavail-> %zu\n",sdsavail(sdsnew(t)));
+
+    // 4.sdscatprintf
+    printf("sdscatprintf-> %s\n", sdscatprintf(sdsnew(t), "%s %d %s", "asdas", 2, "ssss"));
+    // 5.sdstrim
+    printf("sdstrim-> %s\n",sdstrim(sdsnew("    aaaaabb    "), " "));
+
+    printf("sdstrim-> %s\n",sdstrim(sdsnew("aaaxxxxaaaa"), "a"));
+    // 6.sdsrange
+    printf("sdsrange-> %s\n",sdsrange(sdsnew("aaaxxxxaaaa"), 0,-3));
+
+    // 7.sdstolower
+    sds b = sdsnew("AAAAAA");
+    sdstolower(b);
+    printf("sdstolower-> %s\n",b);
+    // 8.sdssplitlen
+    sds a = sdsnew("1,2,3,4,5");
+    sds c = sdssplitlen(a, 9, ",", 1, 1);
+    printf("11%s1111", c);
 };
-
-struct sdshdr sh = {6,2,{'h','2','3','\0'}};
-
-int main() {
-    struct sdshdr *s = &sh;
-    printf("%s\n", s->buf);
-    printf("%d\n",sizeof(struct sdshdr));
-    sds sd = s->buf;
-    struct sdshdr *new_sh = (void *)(sd - (sizeof (struct sdshdr)));
-    printf(new_sh->buf);
-
-}
