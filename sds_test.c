@@ -31,7 +31,9 @@ int main(){
     sdstolower(b);
     printf("sdstolower-> %s\n",b);
     // 8.sdssplitlen
-    sds a = sdsnew("1,2,3,4,5");
-    sds c = sdssplitlen(a, 9, ",", 1, 1);
-    printf("11%s1111", c);
+    sds line = sdsnew("1 2");
+    int argc = 4;
+    printf("res:%s\n", line);
+    sds* argv = sdssplitlen(line,sdslen(line)," ",1,&argc);
+    printf("%s\n", argv[0]);
 };

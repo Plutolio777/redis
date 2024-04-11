@@ -34,15 +34,15 @@ sds.c 文件包含了 SDS 数据结构的定义以及与其相关的一系列操
 - [x] sdslen
 - [x] sdsdup
 - [x] sdsfree
-- [ ] sdsavail
-- [ ] sdsupdatelen
-- [ ] sdsMakeRoomFor
-- [ ] sdscatlen
-- [ ] sdscat
-- [ ] sdscpylen
-- [ ] sdscpy
-- [ ] sdstrim
-- [ ] sdsrange
-- [ ] sdstolower
-- [ ] sdscmp
-- [ ] sdssplitlen
+- [x] sdsavail
+- [x] sdsupdatelen
+- [x] sdsMakeRoomFor
+- [x] sdscatlen
+- [x] sdscat
+- [x] sdscpylen
+- [x] sdscpy
+- [x] sdstrim
+- [x] sdsrange
+- [x] sdstolower
+- [x] sdscmp
+- [x] sdssplitlen

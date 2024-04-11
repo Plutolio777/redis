@@ -456,9 +456,19 @@ int sdscmp(sds s1, sds s2) {
  * requires length arguments. sdssplit() is just the
  * same function but for zero-terminated strings.
  */
+/**
+ * sdssplitlen
+ * 将sds按照指定的分割符分隔成sds数组
+ * @param s 目标sds
+ * @param len sds的长度
+ * @param sep 分隔符
+ * @param seplen 分割符的长度
+ * @param count count是用来表明返回的数组个数的
+ * @return
+ */
 sds *sdssplitlen(char *s, int len, char *sep, int seplen, int *count) {
     int elements = 0, slots = 5, start = 0, j;
-
+    // 开辟5个sds内存用于存放sds数组
     sds *tokens = zmalloc(sizeof(sds)*slots);
 #ifdef SDS_ABORT_ON_OOM
     if (tokens == NULL) sdsOomAbort();
@@ -468,12 +478,15 @@ sds *sdssplitlen(char *s, int len, char *sep, int seplen, int *count) {
         *count = 0;
         return tokens;
     }
+    // 遍历sds字符
     for (j = 0; j < (len-(seplen-1)); j++) {
         /* make sure there is room for the next element and the final one */
+        // 如果数组容量小于存放数+2 则说明库存块不足了 需要提前扩容
         if (slots < elements+2) {
             sds *newtokens;
-
+            // 扩容策略就是当前槽位*2
             slots *= 2;
+            // 重新分配内存
             newtokens = zrealloc(tokens,sizeof(sds)*slots);
             if (newtokens == NULL) {
 #ifdef SDS_ABORT_ON_OOM
@@ -485,7 +498,11 @@ sds *sdssplitlen(char *s, int len, char *sep, int seplen, int *count) {
             tokens = newtokens;
         }
         /* search the separator */
+        // 这里的s为sds字符数组的守地址
+        // 1. (seplen == 1 && *(s+j) == sep[0]) 当分割符为1是直接比较对应位置上的字符是否等于分割符
+        // 2. 如果分割符大于1 则需要使用memcap来对比一段字符谁大谁小了 如果为0则相等
         if ((seplen == 1 && *(s+j) == sep[0]) || (memcmp(s+j,sep,seplen) == 0)) {
+            // 说明匹配到了对数组相应位置进行赋值
             tokens[elements] = sdsnewlen(s+start,j-start);
             if (tokens[elements] == NULL) {
 #ifdef SDS_ABORT_ON_OOM
@@ -500,6 +517,8 @@ sds *sdssplitlen(char *s, int len, char *sep, int seplen, int *count) {
         }
     }
     /* Add the final element. We are sure there is room in the tokens array. */
+    // 添加最后一个元素 上面的循环只有在匹配到分割符的时候将分割符前面的内容装入数组
+    // 1 2 如果存在着中情况且2后面不存在分割符就需要处理最后一个元素
     tokens[elements] = sdsnewlen(s+start,len-start);
     if (tokens[elements] == NULL) {
 #ifdef SDS_ABORT_ON_OOM
