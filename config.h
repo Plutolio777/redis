@@ -6,7 +6,7 @@
 #endif
 
 /* test for malloc_size() */
-#ifdef __APPLE__
+#ifdef __APPLE__ // mac系统适配
 #include <malloc/malloc.h>
 #define HAVE_MALLOC_SIZE 1
 #define redis_malloc_size(p) malloc_size(p)
@@ -27,10 +27,13 @@
 #endif
 
 /* test for polling API */
+// 这里比较关键 这里是不同系统的网络模型适配
+// 如果是linux系统则标志有epoll
 #ifdef __linux__
 #define HAVE_EPOLL 1
 #endif
 
+// 如果是linux系统则标志有kqueue
 #if (defined(__APPLE__) && defined(MAC_OS_X_VERSION_10_6)) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined (__NetBSD__)
 #define HAVE_KQUEUE 1
 #endif

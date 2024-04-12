@@ -29,10 +29,10 @@
  */
 
 #include <stdio.h>
-#include <stdlib.h>
+#include <stdlib.h> // malloc() realloc() free()都是定义在这个里面的
 #include <string.h>
 #include <pthread.h>
-#include "config.h"
+#include "config.h" // 这个里面会定义一些配置信息
 
 #if defined(__sun)
 #define PREFIX_SIZE sizeof(long long)
@@ -40,6 +40,10 @@
 #define PREFIX_SIZE sizeof(size_t)
 #endif
 
+/*
+ * 下面这两个方法是用来变更使用内存变量的
+ * 有两种方式 使用@zmalloc_thread_safe 变量修改前是否加锁
+ */
 #define increment_used_memory(_n) do { \
     if (zmalloc_thread_safe) { \
         pthread_mutex_lock(&used_memory_mutex);  \
@@ -60,10 +64,14 @@
     } \
 } while(0)
 
-static size_t used_memory = 0;
-static int zmalloc_thread_safe = 0;
-pthread_mutex_t used_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
+static size_t used_memory = 0; // 静态变量
+static int zmalloc_thread_safe = 0; // 线程安全标志
+pthread_mutex_t used_memory_mutex = PTHREAD_MUTEX_INITIALIZER; // 互斥锁
 
+/**
+ * 分配内存时OOM的异常处理方式
+ * @param size
+ */
 static void zmalloc_oom(size_t size) {
     fprintf(stderr, "zmalloc: Out of memory trying to allocate %zu bytes\n",
         size);
@@ -71,16 +79,31 @@ static void zmalloc_oom(size_t size) {
     abort();
 }
 
+/**
+ * zmalloc
+ * 分配 size 大小的内存空间
+ * @param size 需要分配的内存大小
+ * @return 已分配内存的指针
+ */
 void *zmalloc(size_t size) {
+    // 调用C的malloc函数进行内存分配
+    // 为什么分配内存的时候需要多分配一个PREFIX_SIZE
     void *ptr = malloc(size+PREFIX_SIZE);
-
+    // 如果指针为空 则说明分配异常 抛出OOM异常
     if (!ptr) zmalloc_oom(size);
 #ifdef HAVE_MALLOC_SIZE
     increment_used_memory(redis_malloc_size(ptr));
     return ptr;
 #else
+    // 实际上PREFIX_SIZE多分配的内存时为了存储这个内存空间的大小
     *((size_t*)ptr) = size;
+    // 计算使用内存
     increment_used_memory(size+PREFIX_SIZE);
+    // 返回数据真正地址的指针
+    //         ptr
+    //          |
+    // <size_t> V <--------   size ------------->
+    // [{ size } { data  data data data         }]
     return (char*)ptr+PREFIX_SIZE;
 #endif
 }
