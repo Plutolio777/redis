@@ -108,13 +108,20 @@ void *zmalloc(size_t size) {
 #endif
 }
 
+/**
+ * zrealloc
+ * 在分配的地址后再重新增加size大小的内存空间
+ * @param ptr
+ * @param size
+ * @return
+ */
 void *zrealloc(void *ptr, size_t size) {
 #ifndef HAVE_MALLOC_SIZE
     void *realptr;
 #endif
     size_t oldsize;
     void *newptr;
-
+    // 如果地址指针为空直接分配内存即可
     if (ptr == NULL) return zmalloc(size);
 #ifdef HAVE_MALLOC_SIZE
     oldsize = redis_malloc_size(ptr);
@@ -125,37 +132,56 @@ void *zrealloc(void *ptr, size_t size) {
     increment_used_memory(redis_malloc_size(newptr));
     return newptr;
 #else
+    // 回到真正的地址头部 这样的话就可以获得之前内存地址的大小了
     realptr = (char*)ptr-PREFIX_SIZE;
-    oldsize = *((size_t*)realptr);
+    // 获取就得内存大小
+    oldsize = *((size_t *) realptr);
+    // 调用系统方法重新分配内存
     newptr = realloc(realptr,size+PREFIX_SIZE);
+    // 如果分配内存时报 抛出OOM异常
     if (!newptr) zmalloc_oom(size);
-
+    // 赋值新的大小
     *((size_t*)newptr) = size;
+    // 调整系统已使用内存带下
     decrement_used_memory(oldsize);
     increment_used_memory(size);
+    // 返回地址
     return (char*)newptr+PREFIX_SIZE;
 #endif
 }
 
+
+/**
+ * 释放内存的方法
+ * @param ptr
+ */
 void zfree(void *ptr) {
 #ifndef HAVE_MALLOC_SIZE
     void *realptr;
     size_t oldsize;
 #endif
-
+    // 如果指针为0无需释放直接返回
     if (ptr == NULL) return;
 #ifdef HAVE_MALLOC_SIZE
     decrement_used_memory(redis_malloc_size(ptr));
     free(ptr);
 #else
+    // 左移获取真正地址
     realptr = (char*)ptr-PREFIX_SIZE;
+    // 调整系统使用内存大小
     oldsize = *((size_t*)realptr);
     decrement_used_memory(oldsize+PREFIX_SIZE);
+    // 系统调用释放内存
     free(realptr);
 #endif
 }
 
+/*
+ *
+ * 根据字符串长度开辟内存 为了方便创建字符串内存
+ */
 char *zstrdup(const char *s) {
+    // 内存大小+1是为了放结尾符
     size_t l = strlen(s)+1;
     char *p = zmalloc(l);
 
@@ -163,6 +189,9 @@ char *zstrdup(const char *s) {
     return p;
 }
 
+/*
+ * 获取目前已使用的总内存
+ */
 size_t zmalloc_used_memory(void) {
     size_t um;
 
@@ -172,6 +201,9 @@ size_t zmalloc_used_memory(void) {
     return um;
 }
 
+/**
+ * 内存分配线程安全开关
+ */
 void zmalloc_enable_thread_safeness(void) {
     zmalloc_thread_safe = 1;
 }

@@ -46,3 +46,14 @@ sds.c 文件包含了 SDS 数据结构的定义以及与其相关的一系列操
 - [x] sdstolower
 - [x] sdscmp
 - [x] sdssplitlen
+
+### zmalloc.c
+zmalloc.c 是 Redis 内存管理模块的核心文件之一。在 Redis 中，内存管理是非常重要的，因为 Redis 是一个内存存储系统，所有的数据都存储在内存中。zmalloc.c 提供了一套定制的内存分配和释放函数，这些函数在 Redis 中被广泛使用，以确保内存管理的效率和安全。
+- [x] increment_used_memory
+- [x] decrement_used_memory
+- [x] zmalloc
+- [x] zrealloc
+- [x] zfree
+- [x] zstrdup
+- [x] zmalloc_used_memory
+- [x] zmalloc_enable_thread_safeness

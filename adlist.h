@@ -33,43 +33,66 @@
 
 /* Node, List, and Iterator are the only data structures used currently. */
 
+/**
+ * 定义了链表的节点 可以看到这里使用的是一个双向链表
+ */
 typedef struct listNode {
+    // 前向指针  指向上一个节点
     struct listNode *prev;
+    // 后向指针 指向下一个节点
     struct listNode *next;
+    // 节点保存的值
     void *value;
+    // AL_START_HEAD 0 从头遍历
+    // AL_START_TAIL 1 从尾遍历
 } listNode;
 
+/*
+ * 用于迭代链表的迭代器
+ */
 typedef struct listIter {
+    // 遍历的当前节点对象
     listNode *next;
+    // 这个是一个标志位 表示向前遍历还是向后遍历
     int direction;
 } listIter;
 
+/**
+ * 双向链表结构体 拥有链表的头尾指针
+ */
 typedef struct list {
     listNode *head;
     listNode *tail;
+    // 定义的实例方法
+    // 用于链表的复制
     void *(*dup)(void *ptr);
+    // 用于链表内存释放
     void (*free)(void *ptr);
+    // 用于链表的匹配
     int (*match)(void *ptr, void *key);
+    // 定义链表的长度
     unsigned int len;
 } list;
 
 /* Functions implemented as macros */
-#define listLength(l) ((l)->len)
-#define listFirst(l) ((l)->head)
-#define listLast(l) ((l)->tail)
-#define listPrevNode(n) ((n)->prev)
-#define listNextNode(n) ((n)->next)
-#define listNodeValue(n) ((n)->value)
+// 宏定义
+#define listLength(l) ((l)->len) // 获取链表长度
+#define listFirst(l) ((l)->head) // 获取表头
+#define listLast(l) ((l)->tail) // 获取表尾
+#define listPrevNode(n) ((n)->prev) // 获取前置节点
+#define listNextNode(n) ((n)->next) // 获取后置节点
+#define listNodeValue(n) ((n)->value) // 获取节点值
 
-#define listSetDupMethod(l,m) ((l)->dup = (m))
-#define listSetFreeMethod(l,m) ((l)->free = (m))
-#define listSetMatchMethod(l,m) ((l)->match = (m))
+#define listSetDupMethod(l,m) ((l)->dup = (m)) // 设置复制方法
+#define listSetFreeMethod(l,m) ((l)->free = (m)) // 设置释放内存的方法
+#define listSetMatchMethod(l,m) ((l)->match = (m)) // 设置匹配的方法
 
-#define listGetDupMethod(l) ((l)->dup)
-#define listGetFree(l) ((l)->free)
-#define listGetMatchMethod(l) ((l)->match)
+#define listGetDupMethod(l) ((l)->dup) // 获取复制方法
+#define listGetFree(l) ((l)->free) // 获取释放内存的方法
+#define listGetMatchMethod(l) ((l)->match) // 获取匹配值的方法
 
 /* Prototypes */
+
 list *listCreate(void);
 void listRelease(list *list);
 list *listAddNodeHead(list *list, void *value);
@@ -84,6 +107,7 @@ listNode *listIndex(list *list, int index);
 void listRewind(list *list, listIter *li);
 void listRewindTail(list *list, listIter *li);
 
+// 定义了迭代器迭代遍历的方向
 /* Directions for iterators */
 #define AL_START_HEAD 0
 #define AL_START_TAIL 1

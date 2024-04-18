@@ -33,17 +33,18 @@
 #include "adlist.h"
 #include "zmalloc.h"
 
-/* Create a new list. The created list can be freed with
- * AlFreeList(), but private value of every node need to be freed
- * by the user before to call AlFreeList().
- *
- * On error, NULL is returned. Otherwise the pointer to the new list. */
+/***
+ * 创建一个新列表。创建的列表可以使用 AlFreeList（） 释放，但用户需要在调用 AlFreeList（） 之前释放每个节点的私有值。出错时，返回 NULL。否则为指向新列表的指针。
+ * @return 返回新创建的链表
+ */
 list *listCreate(void)
 {
     struct list *list;
-
+    // 调用zmalloc分配内存空间
     if ((list = zmalloc(sizeof(*list))) == NULL)
         return NULL;
+    // 赋完初始值就返回了 就是这么简单 一个双向链表就创建好了
+
     list->head = list->tail = NULL;
     list->len = 0;
     list->dup = NULL;
@@ -52,9 +53,13 @@ list *listCreate(void)
     return list;
 }
 
-/* Free the whole list.
+/*
+ * 释放一整个链表
+ * Free the whole list.
  *
- * This function can't fail. */
+ * This function can't fail.
+ * @param list
+ * */
 void listRelease(list *list)
 {
     unsigned int len;
@@ -63,9 +68,13 @@ void listRelease(list *list)
     current = list->head;
     len = list->len;
     while(len--) {
+        // 在current释放内存前先获取 下一个节点的地址
         next = current->next;
+        // 释放节点中的私有值
         if (list->free) list->free(current->value);
+        // 释放节点
         zfree(current);
+
         current = next;
     }
     zfree(list);
