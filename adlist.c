@@ -89,19 +89,36 @@ void listRelease(list *list)
 list *listAddNodeHead(list *list, void *value)
 {
     listNode *node;
-
+    // 先分配node节点内存
     if ((node = zmalloc(sizeof(*node))) == NULL)
         return NULL;
+    // 先把值存起来
     node->value = value;
+    // 第一个节点 头尾指针指向该节点 前置后置节点赋空即可
     if (list->len == 0) {
         list->head = list->tail = node;
         node->prev = node->next = NULL;
     } else {
+        // 添加到链表头部
+        // 当前节点的前置节点为NULL
         node->prev = NULL;
+        //           node
+        //             |
+        //             V
+        // head ---> node node node node <--tail
         node->next = list->head;
+        //           node
+        //            A |
+        //            | V
+        // head --->  node  node node node <--tail
         list->head->prev = node;
+        // head ---> node
+        //            A |
+        //            | V
+        //             node  node node node <--tail
         list->head = node;
     }
+    // 链表长度+1
     list->len++;
     return list;
 }
@@ -123,6 +140,7 @@ list *listAddNodeTail(list *list, void *value)
         list->head = list->tail = node;
         node->prev = node->next = NULL;
     } else {
+        // 从尾部添加节点与头部类似反向思维即可
         node->prev = list->tail;
         node->next = NULL;
         list->tail->next = node;
@@ -139,27 +157,48 @@ list *listAddNodeTail(list *list, void *value)
 void listDelNode(list *list, listNode *node)
 {
     if (node->prev)
+        //        ____________
+        //       |            |
+        // node node<--(node)-->node
+        // 将上一个节点的next指针从自己转而指向自己的下一个指针
         node->prev->next = node->next;
     else
+        // 没有前置节点的话说明当前节点是第一个 头指针指向自己的下一个即可
+        //        head
+        //         V
+        // (node) node node
         list->head = node->next;
     if (node->next)
+        //       |--------------|
+        //       |              V
+        // node node<--(node)-->node
+        //       A              |
+        //       |______________|
+        // 将上一个节点的next指针从自己转而指向自己的下一个指针
         node->next->prev = node->prev;
     else
+        // 后置节点为空则说明是最后一个节点 尾指针指向自己的上一个节点即可
         list->tail = node->prev;
+    // 清空节点value内存 这里节点的 pre 和next都还是指向原来的节点 应该实在这个里面去清除
     if (list->free) list->free(node->value);
+    // 清空节点内存
     zfree(node);
     list->len--;
 }
 
-/* Returns a list iterator 'iter'. After the initialization every
+/*
+ * 返回一个list的迭代器 @listIter
+ * Returns a list iterator 'iter'. After the initialization every
  * call to listNext() will return the next element of the list.
  *
  * This function can't fail. */
 listIter *listGetIterator(list *list, int direction)
 {
     listIter *iter;
-    
+    // 分配迭代器内存
     if ((iter = zmalloc(sizeof(*iter))) == NULL) return NULL;
+    // 根据 direction 来选择是从头还是从尾部遍历
+    // 从头就是把list的head作为迭代器的当前节点就可以
     if (direction == AL_START_HEAD)
         iter->next = list->head;
     else
@@ -168,23 +207,34 @@ listIter *listGetIterator(list *list, int direction)
     return iter;
 }
 
-/* Release the iterator memory */
+/*
+ * 释放迭代器的内存 不需要释放next的内存哈
+ * Release the iterator memory */
 void listReleaseIterator(listIter *iter) {
     zfree(iter);
 }
 
-/* Create an iterator in the list private iterator structure */
+/*
+ * 相当于把迭代器重置成从头遍历
+ * Create an iterator in the list private iterator structure */
 void listRewind(list *list, listIter *li) {
     li->next = list->head;
     li->direction = AL_START_HEAD;
 }
 
+/**
+ * 相当于把迭代器重置成从尾遍历
+ * @param list
+ * @param li
+ */
 void listRewindTail(list *list, listIter *li) {
     li->next = list->tail;
     li->direction = AL_START_TAIL;
 }
 
-/* Return the next element of an iterator.
+/*
+ * 迭代器的迭代方法获取下一个迭代的节点
+ * Return the next element of an iterator.
  * It's valid to remove the currently returned element using
  * listDelNode(), but not to remove other elements.
  *
@@ -211,7 +261,10 @@ listNode *listNext(listIter *iter)
     return current;
 }
 
-/* Duplicate the whole list. On out of memory NULL is returned.
+/*
+ *
+ * 链表的复制
+ * Duplicate the whole list. On out of memory NULL is returned.
  * On success a copy of the original list is returned.
  *
  * The 'Dup' method set with listSetDupMethod() function is used
@@ -224,16 +277,19 @@ list *listDup(list *orig)
     list *copy;
     listIter *iter;
     listNode *node;
-
+    // 分配需要copy的list内存
     if ((copy = listCreate()) == NULL)
         return NULL;
+    // 然后先把这三个函数copy一下
     copy->dup = orig->dup;
     copy->free = orig->free;
     copy->match = orig->match;
+    // 获取迭代器
     iter = listGetIterator(orig, AL_START_HEAD);
     while((node = listNext(iter)) != NULL) {
         void *value;
-
+        // 指定了dup方法的话用dup复制 否则直接获取值
+        // dup方法调用如果为NULL的话复制list失败
         if (copy->dup) {
             value = copy->dup(node->value);
             if (value == NULL) {
@@ -243,17 +299,21 @@ list *listDup(list *orig)
             }
         } else
             value = node->value;
+        // 从头遍历就得从头插入
         if (listAddNodeTail(copy, value) == NULL) {
             listRelease(copy);
             listReleaseIterator(iter);
             return NULL;
         }
     }
+    // 释放迭代器内存
     listReleaseIterator(iter);
     return copy;
 }
 
-/* Search the list for a node matching a given key.
+/*
+ * 链表中查找对应的value值
+ * Search the list for a node matching a given key.
  * The match is performed using the 'match' method
  * set with listSetMatchMethod(). If no 'match' method
  * is set, the 'value' pointer of every node is directly
@@ -266,14 +326,18 @@ listNode *listSearchKey(list *list, void *key)
 {
     listIter *iter;
     listNode *node;
-
+    // 创建迭代器
     iter = listGetIterator(list, AL_START_HEAD);
+
+    // 开始迭代
     while((node = listNext(iter)) != NULL) {
+        // 如果指定了match方法的话就使用方法进行比对
         if (list->match) {
             if (list->match(node->value, key)) {
                 listReleaseIterator(iter);
                 return node;
             }
+        // 否知直接比较两个值是否相等
         } else {
             if (key == node->value) {
                 listReleaseIterator(iter);
@@ -285,14 +349,16 @@ listNode *listSearchKey(list *list, void *key)
     return NULL;
 }
 
-/* Return the element at the specified zero-based index
+/*
+ * 根据index位置获得节点
+ * Return the element at the specified zero-based index
  * where 0 is the head, 1 is the element next to head
  * and so on. Negative integers are used in order to count
  * from the tail, -1 is the last element, -2 the penultimante
  * and so on. If the index is out of range NULL is returned. */
 listNode *listIndex(list *list, int index) {
     listNode *n;
-
+    // 支持-1 -1的话就是 0并且从尾节点遍历
     if (index < 0) {
         index = (-index)-1;
         n = list->tail;

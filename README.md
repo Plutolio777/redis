@@ -57,3 +57,19 @@ zmalloc.c 是 Redis 内存管理模块的核心文件之一。在 Redis 中，�
 - [x] zstrdup
 - [x] zmalloc_used_memory
 - [x] zmalloc_enable_thread_safeness
+
+### adlist.c
+- [x] listCreate
+- [x] listRelease
+- [x] listAddNodeHead
+- [x] listAddNodeTail
+- [x] listDelNode
+- [x] listGetIterator
+- [x] listReleaseIterator
+- [x] listRewind
+- [x] listRewindTail
+- [x] listNext
+- [x] listDup
+- [x] listSearchKey
+- [x] listIndex
+

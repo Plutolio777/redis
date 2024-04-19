@@ -41,7 +41,7 @@ typedef struct listNode {
     struct listNode *prev;
     // 后向指针 指向下一个节点
     struct listNode *next;
-    // 节点保存的值
+    // 节点保存的值 C语言中 void*可以指向任意类型
     void *value;
     // AL_START_HEAD 0 从头遍历
     // AL_START_TAIL 1 从尾遍历

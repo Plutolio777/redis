@@ -18,17 +18,20 @@ OBJ = adlist.o ae.o anet.o dict.o redis.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort
 BENCHOBJ = ae.o anet.o redis-benchmark.o sds.o adlist.o zmalloc.o
 CLIOBJ = anet.o sds.o adlist.o redis-cli.o zmalloc.o
 CHECKDUMPOBJ = redis-check-dump.o lzf_c.o lzf_d.o
+# 1.先定义关联的包
 PTESTOBG = sds_test.o sds.o zmalloc.o
+ZIPMAPTESTOBG = zipmap_test.o sds.o zmalloc.o zipmap.o
 
-
+# 2.定义组合后的服务名
 PRGNAME = redis-server
 BENCHPRGNAME = redis-benchmark
 CLIPRGNAME = redis-cli
 CHECKDUMPPRGNAME = redis-check-dump
 PTESTPRGNAME = sds_test
+ZIPMAPPRGNAME = zipmap_test
 
 
-all: redis-server redis-benchmark redis-cli redis-check-dump sdscatprintf_test
+all: redis-server redis-benchmark redis-cli redis-check-dump sdscatprintf_test zipmap_test
 
 # Deps (use make dep to generate this)
 adlist.o: adlist.c adlist.h zmalloc.h
@@ -49,7 +52,9 @@ redis.o: redis.c fmacros.h config.h redis.h ae.h sds.h anet.h dict.h \
 sds.o: sds.c sds.h zmalloc.h
 zipmap.o: zipmap.c zmalloc.h
 zmalloc.o: zmalloc.c config.h
+# 定义依赖的头文件
 sds_test.o:  sds_test.c sds.h zmalloc.h
+zipmap_test.o: zipmap_test.c zipmap.h zmalloc.h
 
 redis-server: $(OBJ)
 	$(CC) -o $(PRGNAME) $(CCOPT) $(DEBUG) $(OBJ)
@@ -62,11 +67,15 @@ redis-server: $(OBJ)
 redis-benchmark: $(BENCHOBJ)
 	$(CC) -o $(BENCHPRGNAME) $(CCOPT) $(DEBUG) $(BENCHOBJ)
 
+# 4.
 redis-cli: $(CLIOBJ)
 	$(CC) -o $(CLIPRGNAME) $(CCOPT)  $(CLIOBJ)
 
 sds_test: $(PTESTOBG)
 	$(CC) -o $(PTESTPRGNAME) $(CCOPT)  $(PTESTOBG)
+
+zipmap_test: $(ZIPMAPTESTOBG)
+	$(CC) -o $(ZIPMAPPRGNAME) $(CCOPT)  $(ZIPMAPTESTOBG)
 
 redis-check-dump: $(CHECKDUMPOBJ)
 	$(CC) -o $(CHECKDUMPPRGNAME) $(CCOPT) $(DEBUG) $(CHECKDUMPOBJ)
