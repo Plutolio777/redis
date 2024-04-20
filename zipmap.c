@@ -189,9 +189,9 @@ static unsigned int zipmapEncodeLength(unsigned char *p, unsigned int len) {
  * @param zm map对象
  * @param key 待搜索的key
  * @param klen 可以的长度
- * @param totlen
- * @param freeoff
- * @param freelen
+ * @param totlen 如果totallen不为NULL则如果没找到key的话返回map的长度
+ * @param freeoff 如果没找到key 且freelen不为NULL则返回第一个空闲空间的偏移量
+ * @param freelen 如果没找到key 且freelen不为NULL则返回第一个空闲空间的大小
  * @return
  */
 /* Search for a matching key, returning a pointer to the entry inside the
@@ -265,10 +265,18 @@ static unsigned char *zipmapLookupRaw(unsigned char *zm, unsigned char *key, uns
     return NULL;
 }
 
+/**
+ * 根据传入的key长度和value长度计算出map需要新增的大小
+ * 插入的时候会调用
+ * @param klen key的长度
+ * @param vlen value的长度
+ * @return 返回需要的大小
+ */
 static unsigned long zipmapRequiredLength(unsigned int klen, unsigned int vlen) {
     unsigned int l;
-
+    // +3是表示 key len + value len + free
     l = klen+vlen+3;
+    // 如果key或者value都大于等于253还需要各自追加4个字节
     if (klen >= ZIPMAP_BIGLEN) l += 4;
     if (vlen >= ZIPMAP_BIGLEN) l += 4;
     return l;
