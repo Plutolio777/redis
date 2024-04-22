@@ -47,6 +47,11 @@
 
 /* ---------------------------- Utility funcitons --------------------------- */
 
+/**
+ * *fmt,...结合va_list 进行格式化错误输出
+ * @param fmt
+ * @param ...
+ */
 static void _dictPanic(const char *fmt, ...)
 {
     va_list ap;
@@ -60,6 +65,11 @@ static void _dictPanic(const char *fmt, ...)
 
 /* ------------------------- Heap Management Wrappers------------------------ */
 
+/**
+ * 分配内存时候的一个包装器 如果失败了则panic 调用zmalloc分配内存
+ * @param size 需要分配的内存大小
+ * @return
+ */
 static void *_dictAlloc(size_t size)
 {
     void *p = zmalloc(size);
@@ -68,6 +78,10 @@ static void *_dictAlloc(size_t size)
     return p;
 }
 
+/**
+ * 调用zfree释放内存
+ * @param ptr
+ */
 static void _dictFree(void *ptr) {
     zfree(ptr);
 }
@@ -82,6 +96,11 @@ static int _dictInit(dict *ht, dictType *type, void *privDataPtr);
 /* -------------------------- hash functions -------------------------------- */
 
 /* Thomas Wang's 32 bit Mix Function */
+/**
+ * 这是一个hash值打散的一个算法 作用是减少hash冲突 采用的是位运算的思想
+ * @param key
+ * @return
+ */
 unsigned int dictIntHashFunction(unsigned int key)
 {
     key += ~(key << 15);
@@ -101,6 +120,12 @@ unsigned int dictIdentityHashFunction(unsigned int key)
 
 /* Generic hash function (a popular one from Bernstein).
  * I tested a few and this was the best. */
+/**
+ * redis选择的通用hash函数
+ * @param buf 字符串
+ * @param len 字符串的长度
+ * @return
+ */
 unsigned int dictGenHashFunction(const unsigned char *buf, int len) {
     unsigned int hash = 5381;
 
@@ -113,6 +138,11 @@ unsigned int dictGenHashFunction(const unsigned char *buf, int len) {
 
 /* Reset an hashtable already initialized with ht_init().
  * NOTE: This function should only called by ht_destroy(). */
+/**
+ * 还原一个dict
+ * 只能由 ht_destroy调用
+ * @param ht
+ */
 static void _dictReset(dict *ht)
 {
     ht->table = NULL;
@@ -122,19 +152,33 @@ static void _dictReset(dict *ht)
 }
 
 /* Create a new hash table */
-dict *dictCreate(dictType *type,
-        void *privDataPtr)
+/**
+ * 创建一个新的dict
+ * @param type  传入dictType
+ * @param privDataPtr 私有值指针
+ * @return 创建好的dict
+ */
+dict *dictCreate(dictType *type, void *privDataPtr)
 {
+    // 分配dict内存空间
     dict *ht = _dictAlloc(sizeof(*ht));
-
+    // 然后调用init方法初始化一个dict
     _dictInit(ht,type,privDataPtr);
     return ht;
 }
 
 /* Initialize the hash table */
+/**
+ * dict的初始化
+ * @param ht 目标dict
+ * @param type dict类型
+ * @param privDataPtr 私有值
+ * @return 返回初始化的结果 此时的dict的容量还为0
+ */
 int _dictInit(dict *ht, dictType *type,
         void *privDataPtr)
 {
+    // 这里不知道为啥初始化需要先重置dict
     _dictReset(ht);
     ht->type = type;
     ht->privdata = privDataPtr;

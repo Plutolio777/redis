@@ -241,14 +241,18 @@ static unsigned char *zipmapLookupRaw(unsigned char *zm, unsigned char *key, uns
             p += l;
             // 然后将status置于1 尝试进行碎片整理
             zm[0] |= ZIPMAP_STATUS_FRAGMENTED;
-        } else {
+        }
+        else {
             unsigned char free;
 
             // 获取真正的长度
             l = zipmapDecodeLength(p);
             // key的长度相等 且memcmp如果相等的话为0所有 !0就是表示key相等
             // 注意这里直接返回的是整个entry哦不是value <key len><key><value len><free><value>|........
-            if (l == klen && !memcmp(p+1,key,l)) return p;
+            // 注意这里是有bug p+1 如果可以的长度大于253的话 p+1够吗？？？？？
+            // 这里正确的写法应该是 p+zipmapEncodeLength(NULL, l)
+//            if (l == klen && !memcmp(p+1,key,l)) return p;
+            if (l == klen && !memcmp(p+zipmapEncodeLength(NULL, l),key,l)) return p;
             // 如果l的长度不等于k的长度则需要跳过
             // 所以p + zipmapEncodeLength(NULL,l) + l表示直接跳过整个key的位置
             p += zipmapEncodeLength(NULL,l) + l;
