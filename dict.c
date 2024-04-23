@@ -374,76 +374,116 @@ int dictReplace(dict *ht, void *key, void *val)
 }
 
 /* Search and remove an element */
+/**
+ * 从hashtable中删除元素
+ * @param ht
+ * @param key
+ * @param nofree
+ * @return
+ */
 static int dictGenericDelete(dict *ht, const void *key, int nofree)
 {
     unsigned int h;
+    // 准备两个entry
     dictEntry *he, *prevHe;
-
+    // 如果size为0就不需要操作了 返回删除失败
     if (ht->size == 0)
         return DICT_ERR;
+    // 计算索引值
     h = dictHashKey(ht, key) & ht->sizemask;
+    // 根据索引获取entry链
     he = ht->table[h];
-
+    // 开始遍历entry链表
     prevHe = NULL;
     while(he) {
+        // 如果找到相同key
         if (dictCompareHashKeys(ht, key, he->key)) {
             /* Unlink the element from the list */
             if (prevHe)
+                // 如果是中间节点则需要将前置节点的next指向自己的next
                 prevHe->next = he->next;
             else
+                // 如果是头节点这table的索引为止直接放自己的下一个entry即可
                 ht->table[h] = he->next;
+            // 如果需要释放key value的内存
             if (!nofree) {
                 dictFreeEntryKey(ht, he);
                 dictFreeEntryVal(ht, he);
             }
+            // 释放entry内存
             _dictFree(he);
+            // 容量减1
             ht->used--;
             return DICT_OK;
         }
         prevHe = he;
         he = he->next;
     }
+    // 进行到这里说明对应索引为止没有entry 删除失败没有找到
     return DICT_ERR; /* not found */
 }
 
+/*
+ * dictGenericDeletey一层调用包装 默认是会清除key和value内存的
+ */
 int dictDelete(dict *ht, const void *key) {
     return dictGenericDelete(ht,key,0);
 }
 
+/*
+ * dictGenericDeletey一层调用包装 不清除key和value内存 暂未使用
+ */
 int dictDeleteNoFree(dict *ht, const void *key) {
     return dictGenericDelete(ht,key,1);
 }
 
-/* Destroy an entire hash table */
+/**
+ * 销毁整个hashtable的方法
+ * @param ht
+ * @return
+ */
 int _dictClear(dict *ht)
 {
     unsigned long i;
 
     /* Free all the elements */
+    // 开始遍历所有的节点
+    // hashtable的遍历需要遍历整个数组以及数组上面的链表
+    // 一层遍历数组
     for (i = 0; i < ht->size && ht->used > 0; i++) {
         dictEntry *he, *nextHe;
 
         if ((he = ht->table[i]) == NULL) continue;
+        // 二层遍历链表
         while(he) {
             nextHe = he->next;
+            // 释放key value内存
             dictFreeEntryKey(ht, he);
             dictFreeEntryVal(ht, he);
+            // 释放entry内存
             _dictFree(he);
             ht->used--;
             he = nextHe;
         }
     }
+    // 释放整个table的内存
     /* Free the table and the allocated cache structure */
     _dictFree(ht->table);
     /* Re-initialize the table */
+    // 然后重置hashmap 所有属性值为初始值
     _dictReset(ht);
     return DICT_OK; /* never fails */
 }
 
+/*
+ * 销毁整个hashmap
+ */
 /* Clear & Release the hash table */
 void dictRelease(dict *ht)
 {
+    // 释放map上的所有entry 以及table内存
     _dictClear(ht);
+    // 释放hashtable内存
     _dictFree(ht);
 }
 
@@ -471,10 +511,16 @@ dictEntry *dictFind(dict *ht, const void *key)
     return NULL;
 }
 
+/**
+ * 获取hashtable的迭代器
+ * @param ht
+ * @return
+ */
 dictIterator *dictGetIterator(dict *ht)
 {
+    // 分配迭代器内存
     dictIterator *iter = _dictAlloc(sizeof(*iter));
-
+    // 迭代器初始化
     iter->ht = ht;
     iter->index = -1;
     iter->entry = NULL;
@@ -482,17 +528,31 @@ dictIterator *dictGetIterator(dict *ht)
     return iter;
 }
 
+/**
+ * 迭代器的next方法
+ * @param iter
+ * @return
+ */
 dictEntry *dictNext(dictIterator *iter)
 {
+
+    // 整个hashtable的遍历方向是 从左到右从上到下
+    // [][][][][1][][3][][][][]
+    //         [2]  [4]
+    //              [5]
     while (1) {
+        // 如果entry == NULL 数组指针右移
         if (iter->entry == NULL) {
             iter->index++;
-            if (iter->index >=
-                    (signed)iter->ht->size) break;
+            // 如果超过数组长度则 break
+            if (iter->index >= (signed)iter->ht->size) break;
+            // 迭代器的entry指针指向hashtable索引位置的entry
             iter->entry = iter->ht->table[iter->index];
         } else {
+            // 链表指针后移
             iter->entry = iter->nextEntry;
         }
+        // 保存entrey的下一个节点然后返回当前节点
         if (iter->entry) {
             /* We need to save the 'next' here, the iterator user
              * may delete the entry we are returning. */
@@ -503,6 +563,7 @@ dictEntry *dictNext(dictIterator *iter)
     return NULL;
 }
 
+// 释放迭代器的内存
 void dictReleaseIterator(dictIterator *iter)
 {
     _dictFree(iter);
@@ -510,6 +571,12 @@ void dictReleaseIterator(dictIterator *iter)
 
 /* Return a random entry from the hash table. Useful to
  * implement randomized algorithms */
+/**
+ * 从hashtable里面获取一个随机的entry 这个在redis里有啥应用场景嘛
+ * 采样？ lua? 惰性删除？
+ * @param ht
+ * @return
+ */
 dictEntry *dictGetRandomKey(dict *ht)
 {
     dictEntry *he;
