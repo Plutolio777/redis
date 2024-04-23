@@ -50,7 +50,7 @@
 /**
  * hash中的entry
  * 存储key value
- * 以及下一个entry的指针
+ * 以及下一个entry的指针(采用链式法 每一个table原始实际上是一个entry链表)
  */
 typedef struct dictEntry {
     void *key;

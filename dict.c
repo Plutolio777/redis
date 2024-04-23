@@ -175,10 +175,9 @@ dict *dictCreate(dictType *type, void *privDataPtr)
  * @param privDataPtr 私有值
  * @return 返回初始化的结果 此时的dict的容量还为0
  */
-int _dictInit(dict *ht, dictType *type,
-        void *privDataPtr)
+int _dictInit(dict *ht, dictType *type, void *privDataPtr)
 {
-    // 这里不知道为啥初始化需要先重置dict
+    // 冲值dict的所有值
     _dictReset(ht);
     ht->type = type;
     ht->privdata = privDataPtr;
@@ -187,51 +186,105 @@ int _dictInit(dict *ht, dictType *type,
 
 /* Resize the table to the minimal size that contains all the elements,
  * but with the invariant of a USER/BUCKETS ration near to <= 1 */
+/**
+ * map的扩容方法包装
+ * @param ht 传入的map
+ * @return
+ */
 int dictResize(dict *ht)
 {
+    // 获取map中使用的容量
     int minimal = ht->used;
-
+    // 当前容量如果小于 初始容量4则调整为4
     if (minimal < DICT_HT_INITIAL_SIZE)
         minimal = DICT_HT_INITIAL_SIZE;
+    // 调用该方法进行扩容
     return dictExpand(ht, minimal);
 }
 
+/**
+ * 扩展或者创建map
+ * @param ht map对象
+ * @param size 需要扩容的最小容量
+ * @return
+ */
 /* Expand or create the hashtable */
 int dictExpand(dict *ht, unsigned long size)
 {
+    // 新的hashtable
     dict n; /* the new hashtable */
+
+    // 调整size向上取证为2的幂次方
     unsigned long realsize = _dictNextPower(size), i;
 
     /* the size is invalid if it is smaller than the number of
      * elements already inside the hashtable */
     if (ht->used > size)
         return DICT_ERR;
-
+    // 初始新map
     _dictInit(&n, ht->type, ht->privdata);
     n.size = realsize;
     n.sizemask = realsize-1;
+    // 分配新map中table数组的内存
     n.table = _dictAlloc(realsize*sizeof(dictEntry*));
 
     /* Initialize all the pointers to NULL */
+    // 调整map中所有的entry指针指向0也就是NULL
     memset(n.table, 0, realsize*sizeof(dictEntry*));
 
     /* Copy all the elements from the old to the new table:
      * note that if the old hash table is empty ht->size is zero,
      * so dictExpand just creates an hash table. */
+    // 这里开始复制就表的内容
     n.used = ht->used;
     for (i = 0; i < ht->size && ht->used > 0; i++) {
+        // 当前entry和下一个entry的指针
         dictEntry *he, *nextHe;
-
+        // 第i位为NULL则重复
         if (ht->table[i] == NULL) continue;
         
         /* For each hash entry on this slot... */
+        // entry链的头结点
+        // [][][entry][][][]
+        //       V
+        //     entry
+        //       V
+        //     entry
         he = ht->table[i];
+        // 开始遍历采用双指针遍历entry链 这里的扩容跟JAVA HashMap扩容机制类似
         while(he) {
             unsigned int h;
 
             nextHe = he->next;
             /* Get the new element index */
+            // dictHash是计算key的hash值 有三种类型hashtable采用的是同一种hash算法
+            // dictGenHashFunction 作者的注释说这种是最好的 但是也留了两种其他的算法可以学习一下
+            // 注意这个n.sizemask 实际上位 length-1
+            // 这里是经典的 hash & (n-1) 取模运算 能够提高去摸的效率
+            // 这也是为啥在扩容的时候需要将length调整为2的幂了
+            // 经过下面的操作就可以得到entry在新table中的索引了
+            // 数组长度为2的幂次方还有一种好处就是 h这个位置要么在原位置要么等于原位置+原长度
+
             h = dictHashKey(ht, he->key) & n.sizemask;
+            // 这两段代码表示扩容的方式是采用头插法 比如原map
+            // [][][][1][][][]
+            //       [2]
+            //       [3]
+            //                     he->next=n.table[h] n.table[h] = he
+            // 第一次循环                  [1]
+            //  [][][][N][][][]    [][][][N][][][] [][][][1][][][]
+            //  next> [2]                                [N]
+            //        [3]
+            //                   he->next = n.table[h] n.table[h] = he
+            // 第二次遍历                 [2]
+            // [][][][N][][][]    [][][][1][][][]  [][][][2][][][]
+            //                          [N]              [1]
+            // next> [3]                                 [N]
+            //                   he->next = n.table[h] n.table[h] = he
+            // 第三次遍历                 [3]
+            // [][][][N][][][]    [][][][2][][][]  [][][][3][][][]
+            //                          [1]              [2]
+            // next> NULL                                [1]
             he->next = n.table[h];
             n.table[h] = he;
             ht->used--;
@@ -240,26 +293,39 @@ int dictExpand(dict *ht, unsigned long size)
         }
     }
     assert(ht->used == 0);
+    //释放旧hashtable的数组
     _dictFree(ht->table);
 
     /* Remap the new hashtable in the old */
+    //调整指针
     *ht = n;
     return DICT_OK;
 }
 
-/* Add an element to the target hash table */
+/**
+ * 添加一个元素到hashmap
+ * 这个方法看起来是尝试插入如果key已经存在则返回1
+ * @param ht map
+ * @param key
+ * @param val
+ * @return
+ */
 int dictAdd(dict *ht, void *key, void *val)
 {
     int index;
+    // 准备一个data entry对象存放数据
     dictEntry *entry;
 
     /* Get the index of the new element, or -1 if
      * the element already exists. */
+    // 获取key在table中的索引
     if ((index = _dictKeyIndex(ht, key)) == -1)
         return DICT_ERR;
 
     /* Allocates the memory and stores key */
+    // 分配entry的内存 内存不够则OOM
     entry = _dictAlloc(sizeof(*entry));
+    // 头插法插入元素即可
     entry->next = ht->table[index];
     ht->table[index] = entry;
 
@@ -274,15 +340,25 @@ int dictAdd(dict *ht, void *key, void *val)
  * Return 1 if the key was added from scratch, 0 if there was already an
  * element with such key and dictReplace() just performed a value update
  * operation. */
+/**
+ * 这个方法是dictAdd的包装 如果插入失败则修改
+ * 这个方法感觉是可以优化的 因为这里在dictAdd dictFind会两次查找key 应该一次就可以搞定
+ * @param ht
+ * @param key
+ * @param val
+ * @return
+ */
 int dictReplace(dict *ht, void *key, void *val)
 {
     dictEntry *entry, auxentry;
 
     /* Try to add the element. If the key
      * does not exists dictAdd will suceed. */
+    // 首先尝试直接添加元素 如果成功了则直接返回
     if (dictAdd(ht, key, val) == DICT_OK)
         return 1;
     /* It already exists, get the entry */
+    // 如果已经存在这个key的话
     entry = dictFind(ht, key);
     /* Free the old value and set the new one */
     /* Set the new value and free the old one. Note that it is important
@@ -290,6 +366,7 @@ int dictReplace(dict *ht, void *key, void *val)
      * as the previous one. In this context, think to reference counting,
      * you want to increment (set), and then decrement (free), and not the
      * reverse. */
+    // 保存一下指针 后面会释放内存
     auxentry = *entry;
     dictSetHashVal(ht, entry, val);
     dictFreeEntryVal(ht, &auxentry);
@@ -370,14 +447,22 @@ void dictRelease(dict *ht)
     _dictFree(ht);
 }
 
+/**
+ * 在hashtable中通过key获取对应的entry
+ * @param ht
+ * @param key
+ * @return
+ */
 dictEntry *dictFind(dict *ht, const void *key)
 {
     dictEntry *he;
     unsigned int h;
 
     if (ht->size == 0) return NULL;
+    // 计算所以
     h = dictHashKey(ht, key) & ht->sizemask;
     he = ht->table[h];
+    // 比对链表上的所有entry如果相同则返回对应的entry
     while(he) {
         if (dictCompareHashKeys(ht, key, he->key))
             return he;
@@ -466,6 +551,11 @@ static int _dictExpandIfNeeded(dict *ht)
     return DICT_OK;
 }
 
+/**
+ * 这个方法是将容量向上调整为2的幂次方
+ * @param size
+ * @return
+ */
 /* Our hash table capability is a power of two */
 static unsigned long _dictNextPower(unsigned long size)
 {
@@ -482,17 +572,30 @@ static unsigned long _dictNextPower(unsigned long size)
 /* Returns the index of a free slot that can be populated with
  * an hash entry for the given 'key'.
  * If the key already exists, -1 is returned. */
+/**
+ * 这个方法用来根据key获得在数组table中的索引
+ * @param ht
+ * @param key
+ * @return
+ */
 static int _dictKeyIndex(dict *ht, const void *key)
 {
     unsigned int h;
     dictEntry *he;
 
     /* Expand the hashtable if needed */
+    // hashtable的容量都是在插入数据的时候确定
+    // 所以在查找之前会判断是否需要扩容
+    // 1.当hashtable刚刚创建的时候 容量为0时会默认大小4
+    // 2.当容量已经用完时在这里会进行扩容调用dictExpand方法
     if (_dictExpandIfNeeded(ht) == DICT_ERR)
         return -1;
+    // 计算hash以及与运算取模获取索引
     /* Compute the key hash value */
     h = dictHashKey(ht, key) & ht->sizemask;
     /* Search if this slot does not already contain the given key */
+    // 如果当前位置已经有值则还需要比对链表上的每一个节点才能知道key是否存在
+    // 因为hash存在并不到表key一定存在
     he = ht->table[h];
     while(he) {
         if (dictCompareHashKeys(ht, key, he->key))
