@@ -44,7 +44,12 @@
 #include <stdio.h>
 
 #include "anet.h"
-
+/**
+ * 打印错误日志的方法
+ * @param err
+ * @param fmt
+ * @param ...
+ */
 static void anetSetError(char *err, const char *fmt, ...)
 {
     va_list ap;
@@ -55,6 +60,12 @@ static void anetSetError(char *err, const char *fmt, ...)
     va_end(ap);
 }
 
+/**
+ * 将socket设置成非阻塞模式
+ * @param err
+ * @param fd
+ * @return
+ */
 int anetNonBlock(char *err, int fd)
 {
     int flags;
@@ -62,10 +73,16 @@ int anetNonBlock(char *err, int fd)
     /* Set the socket nonblocking.
      * Note that fcntl(2) for F_GETFL and F_SETFL can't be
      * interrupted by a signal. */
+    // int fcntl(int fd, int cmd, ... /* arg */ ); 用于对socket文件描述符进行对应的操作
+    // 1.复制文件描述符(F_DUPFD、int socket) 需要传入需要被复制的描述符
+    // 2.F_GETFD、F_SETFD 获取和设置文件描述符标志
+
+    // 获取文件描述符标志
     if ((flags = fcntl(fd, F_GETFL)) == -1) {
         anetSetError(err, "fcntl(F_GETFL): %s\n", strerror(errno));
         return ANET_ERR;
     }
+    // 设置文件描述符标志位非阻塞
     if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) {
         anetSetError(err, "fcntl(F_SETFL,O_NONBLOCK): %s\n", strerror(errno));
         return ANET_ERR;
@@ -73,9 +90,17 @@ int anetNonBlock(char *err, int fd)
     return ANET_OK;
 }
 
+// 开启TCPNODELAY
 int anetTcpNoDelay(char *err, int fd)
 {
     int yes = 1;
+    // 这里的目的是为了解决发送tcp包的时候会有的一个延时
+    // 可以了解一下  Nagle‘s Algorithm 和 TCP Delayed Acknoledgement
+    // Nagle‘s Algorithm 这两个算法的目的是为了提高带宽利用率而实现的算法 它的做法是将很多个小的TCP包合并成一个
+    // 如果开启了这个算法那么协议栈会累积数值发送以下条件
+    // 1.积累的数据量到达最大的 TCP Segment Size
+    // 2.收到了一个 Ack
+    // TCP Delayed Acknoledgement 它的作用是合并多个ACK请求 减小带宽压力
     if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) == -1)
     {
         anetSetError(err, "setsockopt TCP_NODELAY: %s\n", strerror(errno));

@@ -585,6 +585,7 @@ dictEntry *dictGetRandomKey(dict *ht)
 
     if (ht->used == 0) return NULL;
     do {
+        // 这里就是用一个随机的hash值来获取索引 打到随机取entry的目的
         h = random() & ht->sizemask;
         he = ht->table[h];
     } while(he == NULL);
@@ -593,11 +594,13 @@ dictEntry *dictGetRandomKey(dict *ht)
      * list and we need to get a random element from the list.
      * The only sane way to do so is to count the element and
      * select a random index. */
+    // 获取链表的长度
     listlen = 0;
     while(he) {
         he = he->next;
         listlen++;
     }
+    // 随机hash值取模来获得链表上的随机节点
     listele = random() % listlen;
     he = ht->table[h];
     while(listele--) he = he->next;
@@ -606,13 +609,20 @@ dictEntry *dictGetRandomKey(dict *ht)
 
 /* ------------------------- private functions ------------------------------ */
 
+/**
+ * 判断是否需要扩容
+ * @param ht
+ * @return
+ */
 /* Expand the hash table if needed */
 static int _dictExpandIfNeeded(dict *ht)
 {
     /* If the hash table is empty expand it to the intial size,
      * if the table is "full" dobule its size. */
+    // 如果size为0 则初始扩容
     if (ht->size == 0)
         return dictExpand(ht, DICT_HT_INITIAL_SIZE);
+    // 如果容量满了才会进行扩容
     if (ht->used == ht->size)
         return dictExpand(ht, ht->size*2);
     return DICT_OK;
@@ -676,6 +686,10 @@ void dictEmpty(dict *ht) {
     _dictClear(ht);
 }
 
+/**
+ * 打印hashtable的统计状态
+ * 比如
+ */
 #define DICT_STATS_VECTLEN 50
 void dictPrintStats(dict *ht) {
     unsigned long i, slots = 0, chainlen, maxchainlen = 0;
@@ -708,11 +722,17 @@ void dictPrintStats(dict *ht) {
         totchainlen += chainlen;
     }
     printf("Hash table stats:\n");
+    // 当前容量(size是数组的大小)
     printf(" table size: %ld\n", ht->size);
+    // 当前使用容量
     printf(" number of elements: %ld\n", ht->used);
+    // entry个数
     printf(" different slots: %ld\n", slots);
+    // 最长链表的entry个数
     printf(" max chain length: %ld\n", maxchainlen);
-    printf(" avg chain length (counted): %.02f\n", (float)totchainlen/slots);
+    // 链表平均长度
+    printf(" avg chain length (counted): %.02f\n", (float) totchainlen / slots);
+
     printf(" avg chain length (computed): %.02f\n", (float)ht->used/slots);
     printf(" Chain length distribution:\n");
     for (i = 0; i < DICT_STATS_VECTLEN-1; i++) {
@@ -722,6 +742,7 @@ void dictPrintStats(dict *ht) {
 }
 
 /* ----------------------- StringCopy Hash Table Type ------------------------*/
+
 
 static unsigned int _dictStringCopyHTHashFunction(const void *key)
 {
