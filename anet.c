@@ -96,10 +96,8 @@ int anetTcpNoDelay(char *err, int fd)
     int yes = 1;
     // 这里的目的是为了解决发送tcp包的时候会有的一个延时
     // 可以了解一下  Nagle‘s Algorithm 和 TCP Delayed Acknoledgement
-    // Nagle‘s Algorithm 这两个算法的目的是为了提高带宽利用率而实现的算法 它的做法是将很多个小的TCP包合并成一个
-    // 如果开启了这个算法那么协议栈会累积数值发送以下条件
-    // 1.积累的数据量到达最大的 TCP Segment Size
-    // 2.收到了一个 Ack
+    // 这两个算法在一起会有一些副作用导致发包会有40ms左右的延时 这对于redis来说是无法接受的 因此这里关闭了这种机制
+    // 这两个算法的目的是为了提高带宽利用率而实现的算法 它的做法是将很多个小的TCP包合并成一个
     // TCP Delayed Acknoledgement 它的作用是合并多个ACK请求 减小带宽压力
     if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) == -1)
     {
@@ -108,7 +106,12 @@ int anetTcpNoDelay(char *err, int fd)
     }
     return ANET_OK;
 }
-
+/**
+ * 设置发送缓冲区
+ * @param err
+ * @param fd
+ * @return
+ */
 int anetSetSendBuffer(char *err, int fd, int buffsize)
 {
     if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &buffsize, sizeof(buffsize)) == -1)
@@ -118,7 +121,13 @@ int anetSetSendBuffer(char *err, int fd, int buffsize)
     }
     return ANET_OK;
 }
-
+/**
+ * 设置tcp keepalive
+ * keepalive是tcp提供的一种机制默认是不开启的 用于在tcp层面自动检测连接方的存活状态
+ * @param err
+ * @param fd
+ * @return
+ */
 int anetTcpKeepAlive(char *err, int fd)
 {
     int yes = 1;
