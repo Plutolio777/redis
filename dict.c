@@ -431,7 +431,7 @@ int dictDelete(dict *ht, const void *key) {
 }
 
 /*
- * dictGenericDeletey一层调用包装 不清除key和value内存 暂未使用
+ * dictGeneric Deletey一层调用包装 不清除key和value内存 暂未使用
  */
 int dictDeleteNoFree(dict *ht, const void *key) {
     return dictGenericDelete(ht,key,1);
