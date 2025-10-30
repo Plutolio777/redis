@@ -671,6 +671,7 @@ static void repl() {
         }
 
         config.repeat = 1;
+        // 向redis发送命令
         cliSendCommand(argc, convertToSds(argc, args));
         line = buffer;
     }

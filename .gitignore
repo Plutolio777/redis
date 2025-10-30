@@ -15,3 +15,5 @@ misc/*
 cmake-build-debug-cygwin/*
 *.exe
 
+/cmake-build-debug/
+/src/Makefile.dep
