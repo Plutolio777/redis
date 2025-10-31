@@ -4988,10 +4988,7 @@ static void zslInsert(zskiplist *zsl, double score, robj *obj) {
         /* store rank that is crossed to reach the insert position */
         rank[i] = i == (zsl->level-1) ? 0 : rank[i+1];
 
-        while (x->forward[i] &&
-            (x->forward[i]->score < score ||
-                (x->forward[i]->score == score &&
-                compareStringObjects(x->forward[i]->obj,obj) < 0))) {
+        while (x->forward[i] && (x->forward[i]->score < score || (x->forward[i]->score == score && compareStringObjects(x->forward[i]->obj,obj) < 0))) {
             rank[i] += i > 0 ? x->span[i-1] : 1;
             x = x->forward[i];
         }
