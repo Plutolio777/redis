@@ -85,14 +85,11 @@ void flushAppendOnlyFile(void) {
 
     /* Don't Fsync if no-appendfsync-on-rewrite is set to yes and we have
      * childs performing heavy I/O on disk. */
-    if (server.no_appendfsync_on_rewrite &&
-        (server.bgrewritechildpid != -1 || server.bgsavechildpid != -1))
-            return;
+    if (server.no_appendfsync_on_rewrite && (server.bgrewritechildpid != -1 || server.bgsavechildpid != -1))
+        return;
     /* Fsync if needed */
     now = time(NULL);
-    if (server.appendfsync == APPENDFSYNC_ALWAYS ||
-        (server.appendfsync == APPENDFSYNC_EVERYSEC &&
-         now-server.lastfsync > 1))
+    if (server.appendfsync == APPENDFSYNC_ALWAYS || (server.appendfsync == APPENDFSYNC_EVERYSEC && now-server.lastfsync > 1))
     {
         /* aof_fsync is defined as fdatasync() for Linux in order to avoid
          * flushing metadata. */
@@ -134,12 +131,24 @@ sds catAppendOnlyExpireAtCommand(sds buf, robj *key, robj *seconds) {
     return buf;
 }
 
+
+/*
+ * 函数名称: feedAppendOnlyFile
+ * 功能描述: 将 Redis 命令追加到 AOF（Append Only File）缓冲区中，用于持久化命令操作。
+ *           如果当前命令的目标数据库与上一个命令不同，则会先插入 SELECT 命令以切换数据库。
+ *           对于特定命令如 EXPIRE 和 SETEX，会进行转换处理后再写入。
+ * 参数说明:
+ *   cmd     - 指向当前执行的 Redis 命令结构体的指针
+ *   dictid  - 当前命令所作用的数据库编号
+ *   argv    - 命令参数对象数组
+ *   argc    - 命令参数的数量
+ * 返回值:   无
+ */
 void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int argc) {
     sds buf = sdsempty();
     robj *tmpargv[3];
 
-    /* The DB this command was targetting is not the same as the last command
-     * we appendend. To issue a SELECT command is needed. */
+    /* 如果当前命令作用的数据库编号与上次记录的不同，则需要插入 SELECT 命令来切换数据库 */
     if (dictid != server.appendseldb) {
         char seldb[64];
 
@@ -149,6 +158,11 @@ void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int a
         server.appendseldb = dictid;
     }
 
+    /* 根据命令类型进行特殊处理：
+     * - EXPIRE 转换为 EXPIREAT 命令格式 （aof写的时候只能将过期时间戳写入 索引只能使用 EXPIREAT）
+     * - SETEX 拆分为 SET 和 EXPIREAT 两个命令
+     * - 其他命令使用通用方式处理
+     */
     if (cmd->proc == expireCommand) {
         /* Translate EXPIRE into EXPIREAT */
         buf = catAppendOnlyExpireAtCommand(buf,argv[1],argv[2]);
@@ -164,20 +178,17 @@ void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int a
         buf = catAppendOnlyGenericCommand(buf,argc,argv);
     }
 
-    /* Append to the AOF buffer. This will be flushed on disk just before
-     * of re-entering the event loop, so before the client will get a
-     * positive reply about the operation performed. */
+    /* 将构建好的命令字符串追加到主 AOF 缓冲区中，该缓冲区将在事件循环前刷盘 */
     server.aofbuf = sdscatlen(server.aofbuf,buf,sdslen(buf));
 
-    /* If a background append only file rewriting is in progress we want to
-     * accumulate the differences between the child DB and the current one
-     * in a buffer, so that when the child process will do its work we
-     * can append the differences to the new append only file. */
+    /* 如果正在进行后台 AOF 重写，则同时将命令追加到重写缓冲区中，
+     * 以便在子进程完成重写后可以将差异部分同步过去 */
     if (server.bgrewritechildpid != -1)
         server.bgrewritebuf = sdscatlen(server.bgrewritebuf,buf,sdslen(buf));
 
     sdsfree(buf);
 }
+
 
 /* In Redis commands are always executed in the context of a client, so in
  * order to load the append only file we need to create a fake client. */

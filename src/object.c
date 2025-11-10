@@ -326,18 +326,35 @@ size_t stringObjectLen(robj *o) {
     }
 }
 
+
+/**
+ * 从Redis对象中提取double数值
+ *
+ * 该函数尝试将给定的Redis字符串对象转换为double数值。支持两种编码格式：
+ * RAW编码（字符串形式）和INT编码（整数形式）。
+ *
+ * @param o Redis对象指针，必须是字符串类型
+ * @param target 指向double变量的指针，用于存储转换结果
+ * @return REDIS_OK表示转换成功，REDIS_ERR表示转换失败
+ */
 int getDoubleFromObject(robj *o, double *target) {
     double value;
     char *eptr;
 
+    /* 处理空对象情况，将其值设为0 */
     if (o == NULL) {
         value = 0;
     } else {
         redisAssert(o->type == REDIS_STRING);
+
+        /* 根据不同的编码方式解析数值 */
         if (o->encoding == REDIS_ENCODING_RAW) {
+            /* RAW编码：使用strtod将字符串转换为double */
             value = strtod(o->ptr, &eptr);
+            /* 检查转换是否完全成功且结果不是NaN */
             if (eptr[0] != '\0' || isnan(value)) return REDIS_ERR;
         } else if (o->encoding == REDIS_ENCODING_INT) {
+            /* INT编码：直接将指针值作为长整型转换为double */
             value = (long)o->ptr;
         } else {
             redisPanic("Unknown string encoding");
@@ -347,6 +364,7 @@ int getDoubleFromObject(robj *o, double *target) {
     *target = value;
     return REDIS_OK;
 }
+
 
 int getDoubleFromObjectOrReply(redisClient *c, robj *o, double *target, const char *msg) {
     double value;

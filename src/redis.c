@@ -514,8 +514,7 @@ void activeExpireCycle(void) {
 }
 
 void updateLRUClock(void) {
-    server.lruclock = (time(NULL)/REDIS_LRU_CLOCK_RESOLUTION) &
-                                                REDIS_LRU_CLOCK_MAX;
+    server.lruclock = (time(NULL)/REDIS_LRU_CLOCK_RESOLUTION) & REDIS_LRU_CLOCK_MAX;
 }
 
 int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
@@ -606,8 +605,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
          for (j = 0; j < server.saveparamslen; j++) {
             struct saveparam *sp = server.saveparams+j;
 
-            if (server.dirty >= sp->changes &&
-                now-server.lastsave > sp->seconds) {
+            if (server.dirty >= sp->changes && now-server.lastsave > sp->seconds) {
                 redisLog(REDIS_NOTICE,"%d changes in %d seconds. Saving...",
                     sp->changes, sp->seconds);
                 rdbSaveBackground(server.dbfilename);
@@ -627,9 +625,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         while (server.vm_enabled && zmalloc_used_memory() >
                 server.vm_max_memory)
         {
-            int retval = (server.vm_max_threads == 0) ?
-                        vmSwapOneObjectBlocking() :
-                        vmSwapOneObjectThreaded();
+            int retval = (server.vm_max_threads == 0) ? vmSwapOneObjectBlocking() : vmSwapOneObjectThreaded();
             if (retval == REDIS_ERR && !(loops % 300) &&
                 zmalloc_used_memory() >
                 (server.vm_max_memory+server.vm_max_memory/10))
@@ -847,19 +843,29 @@ void initServer() {
     setupSignalHandlers();
 
     if (server.syslog_enabled) {
-        openlog(server.syslog_ident, LOG_PID | LOG_NDELAY | LOG_NOWAIT,
-            server.syslog_facility);
+        openlog(server.syslog_ident, LOG_PID | LOG_NDELAY | LOG_NOWAIT, server.syslog_facility);
     }
 
     server.mainthread = pthread_self();
+
+    // 创建双向链表用来保存客户端
     server.clients = listCreate();
+    // 创建双向链表用来保存从节点
     server.slaves = listCreate();
+    // 创建双向链表用来保存监听器
     server.monitors = listCreate();
+    // 创建双向链表用来保存阻塞的客户端
     server.unblocked_clients = listCreate();
+    // 创建全局对象
     createSharedObjects();
+
+    // 创建时间循环
     server.el = aeCreateEventLoop();
+    // 分配数据库内存地址
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
 
+
+    // 创建tcp连接过着 unixSocket(实际是udp)
     if (server.port != 0) {
         server.ipfd = anetTcpServer(server.neterr,server.port,server.bindaddr);
         if (server.ipfd == ANET_ERR) {
@@ -879,6 +885,8 @@ void initServer() {
         redisLog(REDIS_WARNING, "Configured to not listen anywhere, exiting.");
         exit(1);
     }
+
+    // 为每个数据库创建实例
     for (j = 0; j < server.dbnum; j++) {
         server.db[j].dict = dictCreate(&dbDictType,NULL);
         server.db[j].expires = dictCreate(&keyptrDictType,NULL);
@@ -908,10 +916,8 @@ void initServer() {
     server.stat_keyspace_hits = 0;
     server.unixtime = time(NULL);
     aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL);
-    if (server.ipfd > 0 && aeCreateFileEvent(server.el,server.ipfd,AE_READABLE,
-        acceptTcpHandler,NULL) == AE_ERR) oom("creating file event");
-    if (server.sofd > 0 && aeCreateFileEvent(server.el,server.sofd,AE_READABLE,
-        acceptUnixHandler,NULL) == AE_ERR) oom("creating file event");
+    if (server.ipfd > 0 && aeCreateFileEvent(server.el,server.ipfd,AE_READABLE, acceptTcpHandler,NULL) == AE_ERR) oom("creating file event");
+    if (server.sofd > 0 && aeCreateFileEvent(server.el,server.sofd,AE_READABLE, acceptUnixHandler,NULL) == AE_ERR) oom("creating file event");
 
     if (server.appendonly) {
         server.appendfd = open(server.appendfilename,O_WRONLY|O_APPEND|O_CREAT,0644);
@@ -957,23 +963,56 @@ struct redisCommand *lookupCommandByCString(char *s) {
     return cmd;
 }
 
-/* Call() is the core of Redis execution of a command */
+/**
+ * @brief 执行Redis命令的核心函数
+ *
+ * 该函数负责执行客户端发送的命令，并处理相关的日志记录、持久化和复制操作。
+ *
+ * @param c 指向redisClient结构的指针，包含客户端信息和要执行的命令
+ *
+ * @details
+ * 执行流程包括：
+ * 1. 记录执行前的脏数据计数和开始时间
+ * 2. 调用具体命令处理函数 c->cmd->proc(c)
+ * 3. 计算执行过程中产生的脏数据和执行时间
+ * 4. 如果执行时间过长，记录到慢查询日志
+ * 5. 如果启用了AOF且有数据变更，将命令写入AOF文件
+ * 6. 如果有数据变更或命令强制要求复制，向从服务器发送复制数据
+ * 7. 如果存在监视器，向监视器发送命令信息
+ * 8. 增加已执行命令的统计计数
+ */
 void call(redisClient *c) {
     long long dirty, start = ustime(), duration;
 
+    /* 记录执行命令前的脏数据计数 （距离上次save之后脏数据计数） */
     dirty = server.dirty;
+
+    /* 执行实际的命令处理函数 */
     c->cmd->proc(c);
+
+    /* 计算命令执行过程中产生的脏数据数量 */
     dirty = server.dirty-dirty;
+
+    /* 计算命令执行耗时 */
     duration = ustime()-start;
+
+    /* 如果命令执行时间过长，记录到慢查询日志中 */
     slowlogPushEntryIfNeeded(c->argv,c->argc,duration);
 
+
+    /* 如果启用了AOF持久化且有数据变更，将命令写入AOF文件 */
     if (server.appendonly && dirty > 0)
         feedAppendOnlyFile(c->cmd,c->db->id,c->argv,c->argc);
-    if ((dirty > 0 || c->cmd->flags & REDIS_CMD_FORCE_REPLICATION) &&
-        listLength(server.slaves))
+
+    /* 如果有数据变更或命令强制要求复制，且存在从服务器，则向从服务器发送复制数据 */
+    if ((dirty > 0 || c->cmd->flags & REDIS_CMD_FORCE_REPLICATION) && listLength(server.slaves))
         replicationFeedSlaves(server.slaves,c->db->id,c->argv,c->argc);
+
+    /* 如果存在监视器，向监视器发送命令信息 */
     if (listLength(server.monitors))
         replicationFeedMonitors(server.monitors,c->db->id,c->argv,c->argc);
+
+    /* 增加已执行命令的统计计数 */
     server.stat_numcommands++;
 }
 
@@ -1000,13 +1039,10 @@ int processCommand(redisClient *c) {
      * such as wrong arity, bad command name and so forth. */
     c->cmd = lookupCommand(c->argv[0]->ptr);
     if (!c->cmd) {
-        addReplyErrorFormat(c,"unknown command '%s'",
-            (char*)c->argv[0]->ptr);
+        addReplyErrorFormat(c,"unknown command '%s'", (char*)c->argv[0]->ptr);
         return REDIS_OK;
-    } else if ((c->cmd->arity > 0 && c->cmd->arity != c->argc) ||
-               (c->argc < -c->cmd->arity)) {
-        addReplyErrorFormat(c,"wrong number of arguments for '%s' command",
-            c->cmd->name);
+    } else if ((c->cmd->arity > 0 && c->cmd->arity != c->argc) || (c->argc < -c->cmd->arity)) {
+        addReplyErrorFormat(c,"wrong number of arguments for '%s' command", c->cmd->name);
         return REDIS_OK;
     }
 
@@ -1023,9 +1059,7 @@ int processCommand(redisClient *c) {
      * keys in the dataset). If there are not the only thing we can do
      * is returning an error. */
     if (server.maxmemory) freeMemoryIfNeeded();
-    if (server.maxmemory && (c->cmd->flags & REDIS_CMD_DENYOOM) &&
-        zmalloc_used_memory() > server.maxmemory)
-    {
+    if (server.maxmemory && (c->cmd->flags & REDIS_CMD_DENYOOM) && zmalloc_used_memory() > server.maxmemory){
         addReplyError(c,"command not allowed when used memory > 'maxmemory'");
         return REDIS_OK;
     }
@@ -1052,6 +1086,7 @@ int processCommand(redisClient *c) {
         return REDIS_OK;
     }
 
+    // loading DB时只允许执行INFO命令
     /* Loading DB? Return an error if the command is not INFO */
     if (server.loading && c->cmd->proc != infoCommand) {
         addReply(c, shared.loadingerr);

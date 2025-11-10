@@ -401,7 +401,16 @@ off_t rdbSavedObjectPages(robj *o) {
     return (bytes+(server.vm_page_size-1))/server.vm_page_size;
 }
 
-/* Save the DB on disk. Return REDIS_ERR on error, REDIS_OK on success */
+
+/**
+ * @brief 将数据库内容保存到磁盘上的RDB文件中
+ *
+ * @param filename 指向目标RDB文件名的字符串指针
+ *
+ * @return
+ *   REDIS_OK  - 成功保存数据库
+ *   REDIS_ERR - 保存过程中发生错误
+ */
 int rdbSave(char *filename) {
     dictIterator *di = NULL;
     dictEntry *de;
@@ -410,87 +419,92 @@ int rdbSave(char *filename) {
     int j;
     time_t now = time(NULL);
 
-    /* Wait for I/O therads to terminate, just in case this is a
-     * foreground-saving, to avoid seeking the swap file descriptor at the
-     * same time. */
+    /* 等待I/O线程终止，防止在前台保存时与交换文件描述符冲突 */
     if (server.vm_enabled)
         waitEmptyIOJobsQueue();
 
+    /* 构造临时文件名并打开文件用于写入 */
     snprintf(tmpfile,256,"temp-%d.rdb", (int) getpid());
     fp = fopen(tmpfile,"w");
     if (!fp) {
         redisLog(REDIS_WARNING, "Failed saving the DB: %s", strerror(errno));
         return REDIS_ERR;
     }
+
+    /* 写入RDB文件头标识 */
     if (fwrite("REDIS0001",9,1,fp) == 0) goto werr;
+
+    /* 遍历所有数据库 */
     for (j = 0; j < server.dbnum; j++) {
         redisDb *db = server.db+j;
         dict *d = db->dict;
         if (dictSize(d) == 0) continue;
+
+        /* 获取安全迭代器以遍历当前数据库 */
         di = dictGetSafeIterator(d);
         if (!di) {
             fclose(fp);
             return REDIS_ERR;
         }
 
-        /* Write the SELECT DB opcode */
+        /* 写入SELECT DB操作码，表示接下来的数据属于哪个数据库 */
         if (rdbSaveType(fp,REDIS_SELECTDB) == -1) goto werr;
         if (rdbSaveLen(fp,j) == -1) goto werr;
 
-        /* Iterate this DB writing every entry */
+        /* 遍历该数据库中的每个键值对 */
         while((de = dictNext(di)) != NULL) {
             sds keystr = dictGetEntryKey(de);
             robj key, *o = dictGetEntryVal(de);
             time_t expiretime;
-            
+
             initStaticStringObject(key,keystr);
             expiretime = getExpire(db,&key);
 
-            /* Save the expire time */
+            /* 如果键有过期时间，则处理过期逻辑 */
             if (expiretime != -1) {
-                /* If this key is already expired skip it */
+                /* 跳过已经过期的键 */
                 if (expiretime < now) continue;
                 if (rdbSaveType(fp,REDIS_EXPIRETIME) == -1) goto werr;
                 if (rdbSaveTime(fp,expiretime) == -1) goto werr;
             }
-            /* Save the key and associated value. This requires special
-             * handling if the value is swapped out. */
-            if (!server.vm_enabled || o->storage == REDIS_VM_MEMORY ||
-                                      o->storage == REDIS_VM_SWAPPING) {
-                /* Save type, key, value */
+
+            /* 根据对象存储状态决定如何保存键值对 */
+            if (!server.vm_enabled || o->storage == REDIS_VM_MEMORY || o->storage == REDIS_VM_SWAPPING) {
+                /* 直接保存类型、键和值 */
                 if (rdbSaveType(fp,o->type) == -1) goto werr;
                 if (rdbSaveStringObject(fp,&key) == -1) goto werr;
                 if (rdbSaveObject(fp,o) == -1) goto werr;
             } else {
-                /* REDIS_VM_SWAPPED or REDIS_VM_LOADING */
+                /* 处理被交换出去的对象 */
                 robj *po;
-                /* Get a preview of the object in memory */
+                /* 获取对象在内存中的预览 */
                 po = vmPreviewObject(o);
-                /* Save type, key, value */
+                /* 保存类型、键和值 */
                 if (rdbSaveType(fp,po->type) == -1) goto werr;
                 if (rdbSaveStringObject(fp,&key) == -1) goto werr;
                 if (rdbSaveObject(fp,po) == -1) goto werr;
-                /* Remove the loaded object from memory */
+                /* 释放加载进来的对象引用计数 */
                 decrRefCount(po);
             }
         }
         dictReleaseIterator(di);
     }
-    /* EOF opcode */
+
+    /* 写入EOF操作码表示文件结束 */
     if (rdbSaveType(fp,REDIS_EOF) == -1) goto werr;
 
-    /* Make sure data will not remain on the OS's output buffers */
+    /* 刷新缓冲区并同步到磁盘 */
     fflush(fp);
     fsync(fileno(fp));
     fclose(fp);
 
-    /* Use RENAME to make sure the DB file is changed atomically only
-     * if the generate DB file is ok. */
+    /* 使用rename原子性地替换旧文件 */
     if (rename(tmpfile,filename) == -1) {
         redisLog(REDIS_WARNING,"Error moving temp DB file on the final destination: %s", strerror(errno));
         unlink(tmpfile);
         return REDIS_ERR;
     }
+
     redisLog(REDIS_NOTICE,"DB saved on disk");
     server.dirty = 0;
     server.lastsave = time(NULL);
@@ -504,24 +518,44 @@ werr:
     return REDIS_ERR;
 }
 
+
+
+/**
+ * 在后台保存RDB文件（通过fork子进程的方式）
+ *
+ * @param filename 要保存的RDB文件名
+ * @return REDIS_OK表示成功启动后台保存，REDIS_ERR表示启动失败
+ *
+ * 该函数通过fork创建子进程来执行RDB持久化操作，避免阻塞主进程。
+ * 父进程继续处理客户端请求，子进程负责实际的数据保存工作。
+ */
 int rdbSaveBackground(char *filename) {
     pid_t childpid;
 
+    /* 检查是否已经有后台保存进程在运行 */
     if (server.bgsavechildpid != -1) return REDIS_ERR;
+
+    /* 如果启用了虚拟内存，等待IO队列为空 */
     if (server.vm_enabled) waitEmptyIOJobsQueue();
+
+    /* 记录当前脏数据数量，用于后续判断是否有新写入 */
     server.dirty_before_bgsave = server.dirty;
+
+    /* 创建子进程 */
     if ((childpid = fork()) == 0) {
-        /* Child */
+        /* 子进程逻辑 */
         if (server.vm_enabled) vmReopenSwapFile();
         if (server.ipfd > 0) close(server.ipfd);
         if (server.sofd > 0) close(server.sofd);
+
+        /* 执行RDB保存操作 */
         if (rdbSave(filename) == REDIS_OK) {
             _exit(0);
         } else {
             _exit(1);
         }
     } else {
-        /* Parent */
+        /* 父进程逻辑 */
         if (childpid == -1) {
             redisLog(REDIS_WARNING,"Can't save in background: fork: %s",
                 strerror(errno));

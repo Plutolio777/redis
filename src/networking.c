@@ -17,9 +17,8 @@ redisClient *createClient(int fd) {
     anetNonBlock(NULL,fd);
     anetTcpNoDelay(NULL,fd);
     if (!c) return NULL;
-    if (aeCreateFileEvent(server.el,fd,AE_READABLE,
-        readQueryFromClient, c) == AE_ERR)
-    {
+    // 客户端读事件处理回调
+    if (aeCreateFileEvent(server.el,fd,AE_READABLE, readQueryFromClient, c) == AE_ERR) {
         close(fd);
         zfree(c);
         return NULL;
@@ -384,27 +383,38 @@ void addReplyBulkLongLong(redisClient *c, long long ll) {
     addReplyBulkCBuffer(c,buf,len);
 }
 
+
+/**
+ * 处理新客户端连接的通用函数
+ *
+ * @param fd 新连接的文件描述符
+ *
+ * 该函数负责创建新的客户端对象，检查最大客户端连接数限制，
+ * 并在必要时拒绝新的连接请求。
+ */
 static void acceptCommonHandler(int fd) {
     redisClient *c;
+
+    /* 尝试为新连接创建客户端对象 */
     if ((c = createClient(fd)) == NULL) {
         redisLog(REDIS_WARNING,"Error allocating resoures for the client");
         close(fd); /* May be already closed, just ingore errors */
         return;
     }
-    /* If maxclient directive is set and this is one client more... close the
-     * connection. Note that we create the client instead to check before
-     * for this condition, since now the socket is already set in nonblocking
-     * mode and we can send an error for free using the Kernel I/O */
+
+    /* 如果设置了最大客户端数量限制且当前连接数已超过限制 */
     if (server.maxclients && listLength(server.clients) > server.maxclients) {
         char *err = "-ERR max number of clients reached\r\n";
 
-        /* That's a best effort error message, don't check write errors */
+        /* 向客户端发送错误信息并关闭连接 */
         if (write(c->fd,err,strlen(err)) == -1) {
             /* Nothing to do, Just to avoid the warning... */
         }
         freeClient(c);
         return;
     }
+
+    /* 增加服务器统计信息中的连接数 */
     server.stat_numconnections++;
 }
 

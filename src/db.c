@@ -6,6 +6,31 @@
  * C-level DB API
  *----------------------------------------------------------------------------*/
 
+/**
+ * @brief 在指定的数据库中查找给定键对应的值对象
+ *
+ * @param db  要查找的数据库指针
+ * @param key 要查找的键对象
+ *
+ * @return 如果找到键，返回对应的值对象；否则返回NULL
+ *
+ * @details
+ * 功能说明:
+ * 1. 在数据库的字典中查找指定键
+ * 2. 如果找到键，更新对象的访问时间用于LRU算法
+ * 3. 处理虚拟内存相关的对象加载和状态管理
+ * 4. 更新统计信息（命中/未命中计数）
+ *
+ * 执行流程：
+ * - 使用 [dictFind](file://E:\MyFactory\redis\src\dict.c#L390-L409) 在数据库字典中查找键
+ * - 如果找到键：
+ *   - 更新LRU时钟（在没有后台保存进程时）
+ *   - 处理虚拟内存状态：
+ *     - 如果对象在内存中或正在交换出去，可能取消IO操作
+ *     - 如果对象已交换到磁盘，则加载回内存
+ *   - 增加命中统计并返回值对象
+ * - 如果未找到键，增加未命中统计并返回NULL
+ */
 robj *lookupKey(redisDb *db, robj *key) {
     dictEntry *de = dictFind(db->dict,key->ptr);
     if (de) {
@@ -18,9 +43,7 @@ robj *lookupKey(redisDb *db, robj *key) {
             val->lru = server.lruclock;
 
         if (server.vm_enabled) {
-            if (val->storage == REDIS_VM_MEMORY ||
-                val->storage == REDIS_VM_SWAPPING)
-            {
+            if (val->storage == REDIS_VM_MEMORY || val->storage == REDIS_VM_SWAPPING){
                 /* If we were swapping the object out, cancel the operation */
                 if (val->storage == REDIS_VM_SWAPPING)
                     vmCancelThreadedIOJob(val);
@@ -44,6 +67,7 @@ robj *lookupKey(redisDb *db, robj *key) {
         return NULL;
     }
 }
+
 
 robj *lookupKeyRead(redisDb *db, robj *key) {
     expireIfNeeded(db,key);
@@ -69,33 +93,47 @@ robj *lookupKeyWriteOrReply(redisClient *c, robj *key, robj *reply) {
 
 /* Add the key to the DB. If the key already exists REDIS_ERR is returned,
  * otherwise REDIS_OK is returned, and the caller should increment the
- * refcount of 'val'. */
+ * refcount of 'val'.
+ *
+ * @param db: 数据库指针
+ * @param key: 要添加的键对象
+ * @param val: 要添加的值对象
+ * @return: 成功返回REDIS_OK，键已存在返回REDIS_ERR
+ */
 int dbAdd(redisDb *db, robj *key, robj *val) {
-    /* Perform a lookup before adding the key, as we need to copy the
-     * key value. */
+    // 查找对应的db中是否已经存在需要添加的key如果存在则添加失败
     if (dictFind(db->dict, key->ptr) != NULL) {
         return REDIS_ERR;
     } else {
+        // 复制sds 然后添加到dict中
         sds copy = sdsdup(key->ptr);
         dictAdd(db->dict, copy, val);
         return REDIS_OK;
     }
 }
 
-/* If the key does not exist, this is just like dbAdd(). Otherwise
- * the value associated to the key is replaced with the new one.
- *
- * On update (key already existed) 0 is returned. Otherwise 1. */
+/**
+ * 在Redis数据库中替换或添加键值对
+ * @param db Redis数据库指针
+ * @param key 键对象指针
+ * @param val 值对象指针
+ * @return 如果是新添加的键值对返回1，如果是替换现有键值对返回0
+ */
 int dbReplace(redisDb *db, robj *key, robj *val) {
+    /* 检查键是否已存在 */
     if (dictFind(db->dict,key->ptr) == NULL) {
+        /* 键不存在，创建键的副本并添加新的键值对 */
         sds copy = sdsdup(key->ptr);
         dictAdd(db->dict, copy, val);
         return 1;
     } else {
+        /* 键已存在，替换对应的值 */
         dictReplace(db->dict, key->ptr, val);
         return 0;
     }
 }
+
+
 
 int dbExists(redisDb *db, robj *key) {
     return dictFind(db->dict,key->ptr) != NULL;
@@ -153,12 +191,22 @@ long long emptyDb() {
     return removed;
 }
 
+
+/**
+ * 选择Redis数据库
+ * @param c Redis客户端指针
+ * @param id 数据库ID
+ * @return 成功返回REDIS_OK，失败返回REDIS_ERR
+ */
 int selectDb(redisClient *c, int id) {
+    /* 检查数据库ID是否有效 */
     if (id < 0 || id >= server.dbnum)
         return REDIS_ERR;
+    /* 设置客户端当前数据库 */
     c->db = &server.db[id];
     return REDIS_OK;
 }
+
 
 /*-----------------------------------------------------------------------------
  * Type agnostic commands operating on the key space
@@ -423,8 +471,7 @@ time_t getExpire(redisDb *db, robj *key) {
     dictEntry *de;
 
     /* No expire? return ASAP */
-    if (dictSize(db->expires) == 0 ||
-       (de = dictFind(db->expires,key->ptr)) == NULL) return -1;
+    if (dictSize(db->expires) == 0 || (de = dictFind(db->expires,key->ptr)) == NULL) return -1;
 
     /* The entry was found in the expire dict, this means it should also
      * be present in the main dict (safety check). */
@@ -488,32 +535,45 @@ int expireIfNeeded(redisDb *db, robj *key) {
  * Expires Commands
  *----------------------------------------------------------------------------*/
 
+
+/**
+ * 设置键的过期时间通用命令处理函数
+ * @param c 客户端连接对象指针
+ * @param key 要设置过期时间的键对象
+ * @param param 过期时间参数对象
+ * @param offset 时间偏移量
+ *
+ * 该函数处理EXPIRE、EXPIREAT等设置键过期时间的命令，根据参数设置键的过期时间，
+ * 如果时间为负数或已过期则删除键，否则设置相应的过期时间。
+ */
 void expireGenericCommand(redisClient *c, robj *key, robj *param, long offset) {
     dictEntry *de;
     long seconds;
 
+    // 获取过期时间参数值
     if (getLongFromObjectOrReply(c, param, &seconds, NULL) != REDIS_OK) return;
 
+    // 根据偏移量调整过期时间
     seconds -= offset;
 
+    // 查找键是否存在于数据库中
     de = dictFind(c->db->dict,key->ptr);
     if (de == NULL) {
         addReply(c,shared.czero);
         return;
     }
-    /* EXPIRE with negative TTL, or EXPIREAT with a timestamp into the past
-     * should never be executed as a DEL when load the AOF or in the context
-     * of a slave instance.
+
+    /* 当TTL为负数或时间戳已过期时，在AOF加载或从实例上下文中不应直接执行DEL操作
      *
-     * Instead we take the other branch of the IF statement setting an expire
-     * (possibly in the past) and wait for an explicit DEL from the master. */
+     * 而是采用IF语句的另一个分支来设置过期时间（可能已过期），
+     * 并等待主节点发送明确的DEL命令。*/
     if (seconds <= 0 && !server.loading && !server.masterhost) {
         robj *aux;
 
         redisAssert(dbDelete(c->db,key));
         server.dirty++;
 
-        /* Replicate/AOF this as an explicit DEL. */
+        /* 将此操作重写为显式的DEL命令进行复制/AOF持久化 */
         aux = createStringObject("DEL",3);
         rewriteClientCommandVector(c,2,aux,key);
         decrRefCount(aux);
@@ -521,6 +581,7 @@ void expireGenericCommand(redisClient *c, robj *key, robj *param, long offset) {
         addReply(c, shared.cone);
         return;
     } else {
+        // 计算并设置过期时间
         time_t when = time(NULL)+seconds;
         setExpire(c->db,key,when);
         addReply(c,shared.cone);
@@ -529,6 +590,7 @@ void expireGenericCommand(redisClient *c, robj *key, robj *param, long offset) {
         return;
     }
 }
+
 
 void expireCommand(redisClient *c) {
     expireGenericCommand(c,c->argv[1],c->argv[2],0);

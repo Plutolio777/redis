@@ -9,13 +9,13 @@
  * objects are never too long. */
 void listTypeTryConversion(robj *subject, robj *value) {
     if (subject->encoding != REDIS_ENCODING_ZIPLIST) return;
-    if (value->encoding == REDIS_ENCODING_RAW &&
-        sdslen(value->ptr) > server.list_max_ziplist_value)
-            listTypeConvert(subject,REDIS_ENCODING_LINKEDLIST);
+    if (value->encoding == REDIS_ENCODING_RAW && sdslen(value->ptr) > server.list_max_ziplist_value)
+        listTypeConvert(subject,REDIS_ENCODING_LINKEDLIST);
 }
 
 void listTypePush(robj *subject, robj *value, int where) {
     /* Check if we need to convert the ziplist */
+    // 这里检测是否从ziplist转换为linkedlist
     listTypeTryConversion(subject,value);
     if (subject->encoding == REDIS_ENCODING_ZIPLIST &&
         ziplistLen(subject->ptr) >= server.list_max_ziplist_entries)
@@ -259,6 +259,7 @@ void listTypeConvert(robj *subject, int enc) {
  *----------------------------------------------------------------------------*/
 
 void pushGenericCommand(redisClient *c, int where) {
+    // 从客户端db中根据key获取value
     robj *lobj = lookupKeyWrite(c->db,c->argv[1]);
     c->argv[2] = tryObjectEncoding(c->argv[2]);
     if (lobj == NULL) {
@@ -273,12 +274,14 @@ void pushGenericCommand(redisClient *c, int where) {
             addReply(c,shared.wrongtypeerr);
             return;
         }
+        // 如果存在BRPOP和BLPOP则尝试直接返回给对应的client不保存
         if (handleClientsWaitingListPush(c,c->argv[1],c->argv[2])) {
             touchWatchedKey(c->db,c->argv[1]);
             addReply(c,shared.cone);
             return;
         }
     }
+    // 多台list插入保存在list中
     listTypePush(lobj,c->argv[2],where);
     addReplyLongLong(c,listTypeLength(lobj));
     touchWatchedKey(c->db,c->argv[1]);

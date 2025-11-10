@@ -200,16 +200,33 @@ static unsigned int zipEncodeLength(unsigned char *p, unsigned char encoding, un
 }
 
 /* Decode the length of the previous element stored at "p". */
+
+/**
+ * 解码ZIP格式中的前一个条目长度
+ *
+ * 该函数用于解码ZIP格式中存储的前一个条目的长度信息。
+ * 根据ZIP格式规范，长度值可能以压缩或未压缩形式存储。
+ *
+ * @param p 指向存储长度数据的字节数组指针
+ * @param lensize 用于返回实际使用的字节数量的指针，如果为NULL则忽略
+ * @return 解码后的长度值
+ */
 static unsigned int zipPrevDecodeLength(unsigned char *p, unsigned int *lensize) {
     unsigned int len = *p;
+
+    // 检查长度值是否小于ZIP_BIGLEN阈值
     if (len < ZIP_BIGLEN) {
+        // 长度值直接存储在第一个字节中，只使用1个字节
         if (lensize) *lensize = 1;
     } else {
+        // 长度值较大，需要额外的字节来存储完整长度
         if (lensize) *lensize = 1+sizeof(len);
         memcpy(&len,p+1,sizeof(len));
     }
+
     return len;
 }
+
 
 /* Encode the length of the previous entry and write it to "p". Return the
  * number of bytes needed to encode this length if "p" is NULL. */
@@ -571,6 +588,16 @@ static unsigned char *__ziplistInsert(unsigned char *zl, unsigned char *p, unsig
     return zl;
 }
 
+
+/**
+ * 向压缩列表中插入数据
+ *
+ * @param zl 压缩列表指针
+ * @param s 要插入的字符串数据
+ * @param slen 字符串数据的长度
+ * @param where 插入位置，ZIPLIST_HEAD表示头部，其他值表示尾部
+ * @return 返回更新后的压缩列表指针
+ */
 unsigned char *ziplistPush(unsigned char *zl, unsigned char *s, unsigned int slen, int where) {
     unsigned char *p;
     p = (where == ZIPLIST_HEAD) ? ZIPLIST_ENTRY_HEAD(zl) : ZIPLIST_ENTRY_END(zl);

@@ -37,6 +37,9 @@
 #include <stdlib.h>
 
 #include "ae.h"
+
+#include <sys/select.h>
+
 #include "zmalloc.h"
 #include "config.h"
 
@@ -52,6 +55,21 @@
     #endif
 #endif
 
+/**
+ * @brief 创建一个新的事件循环对象
+ *
+ * @return 成功时返回指向新创建的 [aeEventLoop](file://E:\MyFactory\redis\src\ae.h#L88-L97) 结构体的指针，失败时返回 `NULL`
+ *
+ * @details
+ * 该函数负责初始化事件循环所需的数据结构，包括：
+ * - 分配 [aeEventLoop](file://E:\MyFactory\redis\src\ae.h#L88-L97) 结构体内存
+ * - 初始化时间事件链表头指针和相关计数器
+ * - 初始化文件描述符相关属性
+ * - 调用 [aeApiCreate](file://E:\MyFactory\redis\src\ae_epoll.c#L11-L19) 创建底层多路复用API接口
+ * - 初始化事件数组，将所有事件掩码设置为 [AE_NONE](file://E:\MyFactory\redis\src\ae.h#L40-L41)
+ *
+ * 如果在内存分配或底层API创建过程中发生错误，函数会清理已分配的资源并返回 `NULL`。
+ */
 aeEventLoop *aeCreateEventLoop(void) {
     aeEventLoop *eventLoop;
     int i;
@@ -74,6 +92,7 @@ aeEventLoop *aeCreateEventLoop(void) {
     return eventLoop;
 }
 
+
 void aeDeleteEventLoop(aeEventLoop *eventLoop) {
     aeApiFree(eventLoop);
     zfree(eventLoop);
@@ -83,9 +102,7 @@ void aeStop(aeEventLoop *eventLoop) {
     eventLoop->stop = 1;
 }
 
-int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
-        aeFileProc *proc, void *clientData)
-{
+int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask, aeFileProc *proc, void *clientData){
     if (fd >= AE_SETSIZE) return AE_ERR;
     aeFileEvent *fe = &eventLoop->events[fd];
 
@@ -141,24 +158,41 @@ static void aeAddMillisecondsToNow(long long milliseconds, long *sec, long *ms) 
     *ms = when_ms;
 }
 
-long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds,
-        aeTimeProc *proc, void *clientData,
-        aeEventFinalizerProc *finalizerProc)
+/**
+ * 创建一个时间事件并添加到事件循环中
+ *
+ * @param eventLoop 事件循环对象指针
+ * @param milliseconds 事件触发的延迟时间（毫秒）
+ * @param proc 时间事件处理函数指针
+ * @param clientData 客户端数据指针，传递给处理函数
+ * @param finalizerProc 事件结束时的清理函数指针
+ *
+ * @return 成功时返回事件ID，失败时返回AE_ERR
+ */
+long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds, aeTimeProc *proc, void *clientData, aeEventFinalizerProc *finalizerProc)
 {
+    // 获取唯一的时间事件ID
     long long id = eventLoop->timeEventNextId++;
+
     aeTimeEvent *te;
 
+    // 分配时间事件结构体内存
     te = zmalloc(sizeof(*te));
     if (te == NULL) return AE_ERR;
     te->id = id;
+
+    // 计算事件触发的绝对时间
     aeAddMillisecondsToNow(milliseconds,&te->when_sec,&te->when_ms);
     te->timeProc = proc;
     te->finalizerProc = finalizerProc;
     te->clientData = clientData;
+
+    // 将新事件插入到时间事件链表头部
     te->next = eventLoop->timeEventHead;
     eventLoop->timeEventHead = te;
     return id;
 }
+
 
 int aeDeleteTimeEvent(aeEventLoop *eventLoop, long long id)
 {
@@ -199,9 +233,7 @@ static aeTimeEvent *aeSearchNearestTimer(aeEventLoop *eventLoop)
     aeTimeEvent *nearest = NULL;
 
     while(te) {
-        if (!nearest || te->when_sec < nearest->when_sec ||
-                (te->when_sec == nearest->when_sec &&
-                 te->when_ms < nearest->when_ms))
+        if (!nearest || te->when_sec < nearest->when_sec || (te->when_sec == nearest->when_sec && te->when_ms < nearest->when_ms))
             nearest = te;
         te = te->next;
     }
@@ -225,9 +257,7 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
             continue;
         }
         aeGetTime(&now_sec, &now_ms);
-        if (now_sec > te->when_sec ||
-            (now_sec == te->when_sec && now_ms >= te->when_ms))
-        {
+        if (now_sec > te->when_sec || (now_sec == te->when_sec && now_ms >= te->when_ms)) {
             int retval;
 
             id = te->id;
@@ -283,8 +313,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
      * file events to process as long as we want to process time
      * events, in order to sleep until the next time event is ready
      * to fire. */
-    if (eventLoop->maxfd != -1 ||
-        ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
+    if (eventLoop->maxfd != -1 || ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
         int j;
         aeTimeEvent *shortest = NULL;
         struct timeval tv, *tvp;
@@ -307,7 +336,8 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             }
             if (tvp->tv_sec < 0) tvp->tv_sec = 0;
             if (tvp->tv_usec < 0) tvp->tv_usec = 0;
-        } else {
+        }
+        else {
             /* If we have to check for events but need to return
              * ASAP because of AE_DONT_WAIT we need to se the timeout
              * to zero */
@@ -320,6 +350,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             }
         }
 
+        // 多台poll实现多种 多路控制
         numevents = aeApiPoll(eventLoop, tvp);
         for (j = 0; j < numevents; j++) {
             aeFileEvent *fe = &eventLoop->events[eventLoop->fired[j].fd];

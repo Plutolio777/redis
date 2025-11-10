@@ -275,7 +275,7 @@ typedef struct vmPointer {
 } while(0);
 
 typedef struct redisDb {
-    dict *dict;                 /* The keyspace for this DB */
+    dict *dict;                 /* The keyspace for this DB 键空间 所有的键值对数据都存在这里 */
     dict *expires;              /* Timeout of keys with a timeout set */
     dict *blocking_keys;        /* Keys with clients waiting for data (BLPOP) */
     dict *io_keys;              /* Keys with clients waiting for VM I/O */
@@ -308,8 +308,8 @@ typedef struct blockingState {
 /* With multiplexing we need to take per-clinet state.
  * Clients are taken in a liked list. */
 typedef struct redisClient {
-    int fd;
-    redisDb *db;
+    int fd;  // 客户端正在使用的套接字
+    redisDb *db;  // 当前客户端正在使用的db
     int dictid;
     sds querybuf;
     int argc;
@@ -366,7 +366,7 @@ struct redisServer {
     char *unixsocket;
     int ipfd;
     int sofd;
-    redisDb *db;
+    redisDb *db; // redisDb 结构数组 保存着服务器中的所有数据库
     long long dirty;            /* changes to DB from the last save */
     long long dirty_before_bgsave; /* used to restore dirty on failed BGSAVE */
     list *clients;
@@ -398,7 +398,7 @@ struct redisServer {
     /* Configuration */
     int verbosity;
     int maxidletime;
-    int dbnum;
+    int dbnum; // 服务器的数据库数量
     int daemonize;
     int appendonly;
     int appendfsync;
