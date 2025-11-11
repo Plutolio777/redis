@@ -621,8 +621,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     /* Swap a few keys on disk if we are over the memory limit and VM
      * is enbled. Try to free objects from the free list first. */
     if (vmCanSwapOut()) {
-        while (server.vm_enabled && zmalloc_used_memory() >
-                server.vm_max_memory)
+        while (server.vm_enabled && zmalloc_used_memory() > server.vm_max_memory)
         {
             int retval = (server.vm_max_threads == 0) ? vmSwapOneObjectBlocking() : vmSwapOneObjectThreaded();
             if (retval == REDIS_ERR && !(loops % 300) &&
