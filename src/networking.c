@@ -64,8 +64,7 @@ int _installWriteEvent(redisClient *c) {
     if (c->bufpos == 0 && listLength(c->reply) == 0 &&
         (c->replstate == REDIS_REPL_NONE ||
          c->replstate == REDIS_REPL_ONLINE) &&
-        aeCreateFileEvent(server.el, c->fd, AE_WRITABLE,
-        sendReplyToClient, c) == AE_ERR) return REDIS_ERR;
+        aeCreateFileEvent(server.el, c->fd, AE_WRITABLE, sendReplyToClient, c) == AE_ERR) return REDIS_ERR;
     return REDIS_OK;
 }
 
@@ -836,6 +835,17 @@ void processInputBuffer(redisClient *c) {
     }
 }
 
+/**
+ * 从客户端读取查询数据的回调函数
+ *
+ * @param el 事件循环对象指针
+ * @param fd 客户端文件描述符
+ * @param privdata 私有数据指针，指向redis客户端对象
+ * @param mask 事件掩码，表示事件类型
+ *
+ * 该函数负责从指定的客户端文件描述符读取数据，将读取到的数据追加到客户端的查询缓冲区中，
+ * 并更新客户端的最后交互时间，最后调用处理输入缓冲区的函数来处理接收到的数据。
+ */
 void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     redisClient *c = (redisClient*) privdata;
     char buf[REDIS_IOBUF_LEN];
@@ -843,8 +853,10 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     REDIS_NOTUSED(el);
     REDIS_NOTUSED(mask);
 
+    /* 从客户端文件描述符读取数据到缓冲区 */
     nread = read(fd, buf, REDIS_IOBUF_LEN);
     if (nread == -1) {
+        /* 处理读取错误情况 */
         if (errno == EAGAIN) {
             nread = 0;
         } else {
@@ -853,18 +865,24 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
             return;
         }
     } else if (nread == 0) {
+        /* 客户端关闭连接的情况 */
         redisLog(REDIS_VERBOSE, "Client closed connection");
         freeClient(c);
         return;
     }
+
+    /* 将读取到的数据追加到客户端查询缓冲区并更新交互时间 */
     if (nread) {
         c->querybuf = sdscatlen(c->querybuf,buf,nread);
         c->lastinteraction = time(NULL);
     } else {
         return;
     }
+
+    /* 处理输入缓冲区中的数据 */
     processInputBuffer(c);
 }
+
 
 void getClientsMaxBuffers(unsigned long *longest_output_list,
                           unsigned long *biggest_input_buffer) {

@@ -7,6 +7,9 @@
 
 /* ---------------------------------- MASTER -------------------------------- */
 
+/*
+ *  向从节点实时同步数据
+ */
 void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
     listNode *ln;
     listIter li;
@@ -24,8 +27,7 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
         outv = zmalloc(sizeof(robj*)*(argc*3+1));
     }
 
-    lenobj = createObject(REDIS_STRING,
-            sdscatprintf(sdsempty(), "*%d\r\n", argc));
+    lenobj = createObject(REDIS_STRING, sdscatprintf(sdsempty(), "*%d\r\n", argc));
     lenobj->refcount = 0;
     outv[outc++] = lenobj;
     for (j = 0; j < argc; j++) {
@@ -65,8 +67,7 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
             case 8: selectcmd = shared.select8; break;
             case 9: selectcmd = shared.select9; break;
             default:
-                selectcmd = createObject(REDIS_STRING,
-                    sdscatprintf(sdsempty(),"select %d\r\n",dictid));
+                selectcmd = createObject(REDIS_STRING, sdscatprintf(sdsempty(),"select %d\r\n",dictid));
                 selectcmd->refcount = 0;
                 break;
             }
@@ -112,8 +113,16 @@ void replicationFeedMonitors(list *monitors, int dictid, robj **argv, int argc) 
     decrRefCount(cmdobj);
 }
 
+
+/*
+ * 从节点发送sync之后，主节点开始处理sync命令
+ * 如果正在执行bgsave命令会将当前所有的slave的客户端标记为 REDIS_REPL_WAIT_BGSAVE_END
+ * 在serverCron中会检测bgsave是否结束 结束的话会执行 backgroundSaveDoneHandler 回调 在这个回调中会执行 updateSlavesWaitingBgsave
+ * updateSlavesWaitingBgsave 会将sendBulkToSlave加到对应的fd的时间循环中
+ */
 void syncCommand(redisClient *c) {
     /* ignore SYNC if aleady slave or in monitor mode */
+    // 自己是从节点忽略sync命令
     if (c->flags & REDIS_SLAVE) return;
 
     /* Refuse SYNC requests if we are a slave but the link with our master
@@ -135,6 +144,7 @@ void syncCommand(redisClient *c) {
     redisLog(REDIS_NOTICE,"Slave ask for synchronization");
     /* Here we need to check if there is a background saving operation
      * in progress, or if it is required to start one */
+    // 如果存在bgsave子进程 将所有slaves 客户端标记为 REDIS_REPL_WAIT_BGSAVE_END
     if (server.bgsavechildpid != -1) {
         /* Ok a background save is in progress. Let's check if it is a good
          * one for replication, i.e. if there is another slave that is
@@ -148,6 +158,7 @@ void syncCommand(redisClient *c) {
             slave = ln->value;
             if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_END) break;
         }
+        // 这里说明已经有其他的slave启动了rdb文件的生成 因此可以加入此次复制
         if (ln) {
             /* Perfect, the server is already registering differences for
              * another slave. Set the right state, and copy the buffer. */
@@ -155,15 +166,17 @@ void syncCommand(redisClient *c) {
             c->reply = listDup(slave->reply);
             c->replstate = REDIS_REPL_WAIT_BGSAVE_END;
             redisLog(REDIS_NOTICE,"Waiting for end of BGSAVE for SYNC");
+        // 否则需要等待下一次bgsave
         } else {
-            /* No way, we need to wait for the next BGSAVE in order to
-             * register differences */
+            /* No way, we need to wait for the next BGSAVE in order to register differences */
             c->replstate = REDIS_REPL_WAIT_BGSAVE_START;
             redisLog(REDIS_NOTICE,"Waiting for next BGSAVE for SYNC");
         }
+    // 如果没有的话直接启动rdb备份
     } else {
         /* Ok we don't have a BGSAVE in progress, let's start one */
         redisLog(REDIS_NOTICE,"Starting BGSAVE for SYNC");
+        // fork进程执行bgsave命令生成最新的rdb文件
         if (rdbSaveBackground(server.dbfilename) != REDIS_OK) {
             redisLog(REDIS_NOTICE,"Replication failed, can't BGSAVE");
             addReplyError(c,"Unable to perform background save");
@@ -192,8 +205,7 @@ void sendBulkToSlave(aeEventLoop *el, int fd, void *privdata, int mask) {
          * operations) will never be smaller than the few bytes we need. */
         sds bulkcount;
 
-        bulkcount = sdscatprintf(sdsempty(),"$%lld\r\n",(unsigned long long)
-            slave->repldbsize);
+        bulkcount = sdscatprintf(sdsempty(),"$%lld\r\n",(unsigned long long) slave->repldbsize);
         if (write(fd,bulkcount,sdslen(bulkcount)) != (signed)sdslen(bulkcount))
         {
             sdsfree(bulkcount);
@@ -205,11 +217,11 @@ void sendBulkToSlave(aeEventLoop *el, int fd, void *privdata, int mask) {
     lseek(slave->repldbfd,slave->repldboff,SEEK_SET);
     buflen = read(slave->repldbfd,buf,REDIS_IOBUF_LEN);
     if (buflen <= 0) {
-        redisLog(REDIS_WARNING,"Read error sending DB to slave: %s",
-            (buflen == 0) ? "premature EOF" : strerror(errno));
+        redisLog(REDIS_WARNING,"Read error sending DB to slave: %s", (buflen == 0) ? "premature EOF" : strerror(errno));
         freeClient(slave);
         return;
     }
+    // 发送整个rdb文件
     if ((nwritten = write(fd,buf,buflen)) == -1) {
         redisLog(REDIS_VERBOSE,"Write error sending DB to slave: %s",
             strerror(errno));
@@ -222,8 +234,7 @@ void sendBulkToSlave(aeEventLoop *el, int fd, void *privdata, int mask) {
         slave->repldbfd = -1;
         aeDeleteFileEvent(server.el,slave->fd,AE_WRITABLE);
         slave->replstate = REDIS_REPL_ONLINE;
-        if (aeCreateFileEvent(server.el, slave->fd, AE_WRITABLE,
-            sendReplyToClient, slave) == AE_ERR) {
+        if (aeCreateFileEvent(server.el, slave->fd, AE_WRITABLE, sendReplyToClient, slave) == AE_ERR) {
             freeClient(slave);
             return;
         }
@@ -247,6 +258,7 @@ void updateSlavesWaitingBgsave(int bgsaveerr) {
     while((ln = listNext(&li))) {
         redisClient *slave = ln->value;
 
+        // 这里如果还有savle没有进入REDIS_REPL_WAIT_BGSAVE_END 则后续要立马再进行bgsave
         if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START) {
             startbgsave = 1;
             slave->replstate = REDIS_REPL_WAIT_BGSAVE_END;
@@ -258,8 +270,7 @@ void updateSlavesWaitingBgsave(int bgsaveerr) {
                 redisLog(REDIS_WARNING,"SYNC failed. BGSAVE child returned an error");
                 continue;
             }
-            if ((slave->repldbfd = open(server.dbfilename,O_RDONLY)) == -1 ||
-                redis_fstat(slave->repldbfd,&buf) == -1) {
+            if ((slave->repldbfd = open(server.dbfilename,O_RDONLY)) == -1 || redis_fstat(slave->repldbfd,&buf) == -1) {
                 freeClient(slave);
                 redisLog(REDIS_WARNING,"SYNC failed. Can't open/stat DB after BGSAVE: %s", strerror(errno));
                 continue;
@@ -397,17 +408,20 @@ void readSyncBulkPayload(aeEventLoop *el, int fd, void *privdata, int mask) {
 
 int syncWithMaster(void) {
     char buf[1024], tmpfile[256], authcmd[1024];
+
+    // 连接主节点
     int fd = anetTcpConnect(NULL,server.masterhost,server.masterport);
     int dfd, maxtries = 5;
 
     if (fd == -1) {
-        redisLog(REDIS_WARNING,"Unable to connect to MASTER: %s",
-            strerror(errno));
+        redisLog(REDIS_WARNING,"Unable to connect to MASTER: %s", strerror(errno));
         return REDIS_ERR;
     }
 
     /* AUTH with the master if required. */
     if(server.masterauth) {
+
+        // 发送认证命令
     	snprintf(authcmd, 1024, "AUTH %s\r\n", server.masterauth);
     	if (syncWrite(fd, authcmd, strlen(server.masterauth)+7, 5) == -1) {
             close(fd);
@@ -430,6 +444,7 @@ int syncWithMaster(void) {
     }
 
     /* Issue the SYNC command */
+    // 发送sync命令
     if (syncWrite(fd,"SYNC \r\n",7,5) == -1) {
         close(fd);
         redisLog(REDIS_WARNING,"I/O error writing to MASTER: %s",
@@ -439,8 +454,7 @@ int syncWithMaster(void) {
 
     /* Prepare a suitable temp file for bulk transfer */
     while(maxtries--) {
-        snprintf(tmpfile,256,
-            "temp-%d.%ld.rdb",(int)time(NULL),(long int)getpid());
+        snprintf(tmpfile,256, "temp-%d.%ld.rdb",(int)time(NULL),(long int)getpid());
         dfd = open(tmpfile,O_CREAT|O_WRONLY|O_EXCL,0644);
         if (dfd != -1) break;
         sleep(1);
@@ -452,8 +466,8 @@ int syncWithMaster(void) {
     }
 
     /* Setup the non blocking download of the bulk file. */
-    if (aeCreateFileEvent(server.el, fd, AE_READABLE, readSyncBulkPayload, NULL)
-            == AE_ERR)
+    // 创建一个可读事件 处理主服务发送过来的rdb文件
+    if (aeCreateFileEvent(server.el, fd, AE_READABLE, readSyncBulkPayload, NULL) == AE_ERR)
     {
         close(fd);
         redisLog(REDIS_WARNING,"Can't create readable event for SYNC");
@@ -469,8 +483,7 @@ int syncWithMaster(void) {
 }
 
 void slaveofCommand(redisClient *c) {
-    if (!strcasecmp(c->argv[1]->ptr,"no") &&
-        !strcasecmp(c->argv[2]->ptr,"one")) {
+    if (!strcasecmp(c->argv[1]->ptr,"no") && !strcasecmp(c->argv[2]->ptr,"one")) {
         if (server.masterhost) {
             sdsfree(server.masterhost);
             server.masterhost = NULL;
@@ -488,8 +501,7 @@ void slaveofCommand(redisClient *c) {
         if (server.replstate == REDIS_REPL_TRANSFER)
             replicationAbortSyncTransfer();
         server.replstate = REDIS_REPL_CONNECT;
-        redisLog(REDIS_NOTICE,"SLAVE OF %s:%d enabled (user request)",
-            server.masterhost, server.masterport);
+        redisLog(REDIS_NOTICE,"SLAVE OF %s:%d enabled (user request)", server.masterhost, server.masterport);
     }
     addReply(c,shared.ok);
 }
@@ -499,18 +511,20 @@ void slaveofCommand(redisClient *c) {
 #define REDIS_REPL_TIMEOUT 60
 #define REDIS_REPL_PING_SLAVE_PERIOD 10
 
+/*
+ * 当在从节点输入 SLAVEOF host port 命令后 从服务器会将自己的replstate修改为REDIS_REPL_CONNECT
+ * 在serverCron定时任务中 syncWithMaster 创建一个
+ */
 void replicationCron(void) {
     /* Bulk transfer I/O timeout? */
-    if (server.masterhost && server.replstate == REDIS_REPL_TRANSFER &&
-        (time(NULL)-server.repl_transfer_lastio) > REDIS_REPL_TIMEOUT)
+    if (server.masterhost && server.replstate == REDIS_REPL_TRANSFER && (time(NULL)-server.repl_transfer_lastio) > REDIS_REPL_TIMEOUT)
     {
         redisLog(REDIS_WARNING,"Timeout receiving bulk data from MASTER...");
         replicationAbortSyncTransfer();
     }
 
     /* Timed out master when we are an already connected slave? */
-    if (server.masterhost && server.replstate == REDIS_REPL_CONNECTED &&
-        (time(NULL)-server.master->lastinteraction) > REDIS_REPL_TIMEOUT)
+    if (server.masterhost && server.replstate == REDIS_REPL_CONNECTED && (time(NULL)-server.master->lastinteraction) > REDIS_REPL_TIMEOUT)
     {
         redisLog(REDIS_WARNING,"MASTER time out: no data nor PING received...");
         freeClient(server.master);

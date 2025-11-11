@@ -1036,8 +1036,7 @@ void backgroundSaveDoneHandler(int statloc) {
     int bysignal = WIFSIGNALED(statloc);
 
     if (!bysignal && exitcode == 0) {
-        redisLog(REDIS_NOTICE,
-            "Background saving terminated with success");
+        redisLog(REDIS_NOTICE, "Background saving terminated with success");
         server.dirty = server.dirty - server.dirty_before_bgsave;
         server.lastsave = time(NULL);
     } else if (!bysignal && exitcode != 0) {

@@ -606,8 +606,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
             struct saveparam *sp = server.saveparams+j;
 
             if (server.dirty >= sp->changes && now-server.lastsave > sp->seconds) {
-                redisLog(REDIS_NOTICE,"%d changes in %d seconds. Saving...",
-                    sp->changes, sp->seconds);
+                redisLog(REDIS_NOTICE,"%d changes in %d seconds. Saving...", sp->changes, sp->seconds);
                 rdbSaveBackground(server.dbfilename);
                 break;
             }
@@ -1004,7 +1003,7 @@ void call(redisClient *c) {
     if (server.appendonly && dirty > 0)
         feedAppendOnlyFile(c->cmd,c->db->id,c->argv,c->argc);
 
-    /* 如果有数据变更或命令强制要求复制，且存在从服务器，则向从服务器发送复制数据 */
+    /* 命令传播 如果有数据变更或命令强制要求复制，且存在从服务器，则向从服务器发送复制数据 */
     if ((dirty > 0 || c->cmd->flags & REDIS_CMD_FORCE_REPLICATION) && listLength(server.slaves))
         replicationFeedSlaves(server.slaves,c->db->id,c->argv,c->argc);
 
@@ -1041,12 +1040,15 @@ int processCommand(redisClient *c) {
     if (!c->cmd) {
         addReplyErrorFormat(c,"unknown command '%s'", (char*)c->argv[0]->ptr);
         return REDIS_OK;
+
+    // 检查参数个数是否满足要求
     } else if ((c->cmd->arity > 0 && c->cmd->arity != c->argc) || (c->argc < -c->cmd->arity)) {
         addReplyErrorFormat(c,"wrong number of arguments for '%s' command", c->cmd->name);
         return REDIS_OK;
     }
 
     /* Check if the user is authenticated */
+    // 命令鉴权
     if (server.requirepass && !c->authenticated && c->cmd->proc != authCommand)
     {
         addReplyError(c,"operation not permitted");
@@ -1077,8 +1079,7 @@ int processCommand(redisClient *c) {
 
     /* Only allow INFO and SLAVEOF when slave-serve-stale-data is no and
      * we are a slave with a broken link with master. */
-    if (server.masterhost && server.replstate != REDIS_REPL_CONNECTED &&
-        server.repl_serve_stale_data == 0 &&
+    if (server.masterhost && server.replstate != REDIS_REPL_CONNECTED && server.repl_serve_stale_data == 0 &&
         c->cmd->proc != infoCommand && c->cmd->proc != slaveofCommand)
     {
         addReplyError(c,
@@ -1101,8 +1102,7 @@ int processCommand(redisClient *c) {
         queueMultiCommand(c);
         addReply(c,shared.queued);
     } else {
-        if (server.vm_enabled && server.vm_max_threads > 0 &&
-            blockClientOnSwappedKeys(c)) return REDIS_ERR;
+        if (server.vm_enabled && server.vm_max_threads > 0 && blockClientOnSwappedKeys(c)) return REDIS_ERR;
         call(c);
     }
     return REDIS_OK;
@@ -1448,8 +1448,7 @@ void freeMemoryIfNeeded(void) {
             redisDb *db = server.db+j;
             dict *dict;
 
-            if (server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_LRU ||
-                server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_RANDOM)
+            if (server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_LRU || server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_RANDOM)
             {
                 dict = server.db[j].dict;
             } else {

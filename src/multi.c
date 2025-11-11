@@ -148,35 +148,51 @@ typedef struct watchedKey {
     redisDb *db;
 } watchedKey;
 
-/* Watch for the specified key */
+/*
+ * 函数: watchForKey
+ * 功能: 监视指定的键，用于实现Redis事务的WATCH机制
+ * 参数:
+ *   c   - Redis客户端指针，表示发起监视操作的客户端
+ *   key - 被监视的键对象
+ * 返回值: 无
+ * 说明: 该函数会将指定键添加到客户端的监视列表中，并在数据库层面建立键与客户端的映射关系，
+ *       用于后续事务执行时检查被监视键是否被修改
+ */
 void watchForKey(redisClient *c, robj *key) {
     list *clients = NULL;
     listIter li;
     listNode *ln;
     watchedKey *wk;
 
-    /* Check if we are already watching for this key */
+    /* 检查当前客户端是否已经监视了这个键，避免重复监视 */
     listRewind(c->watched_keys,&li);
     while((ln = listNext(&li))) {
         wk = listNodeValue(ln);
         if (wk->db == c->db && equalStringObjects(key,wk->key))
-            return; /* Key already watched */
+            return; /* 键已经被当前客户端监视 */
     }
-    /* This key is not already watched in this DB. Let's add it */
+
+    /* 该键未被当前数据库中的当前客户端监视，需要添加监视 */
+
+    /* 获取或创建数据库层面的键监视列表 */
     clients = dictFetchValue(c->db->watched_keys,key);
-    if (!clients) { 
+    if (!clients) {
         clients = listCreate();
         dictAdd(c->db->watched_keys,key,clients);
         incrRefCount(key);
     }
+
+    /* 将当前客户端添加到该键的监视客户端列表中 */
     listAddNodeTail(clients,c);
-    /* Add the new key to the lits of keys watched by this client */
+
+    /* 创建新的监视键结构体，并添加到当前客户端的监视键列表中 */
     wk = zmalloc(sizeof(*wk));
     wk->key = key;
     wk->db = c->db;
     incrRefCount(key);
     listAddNodeTail(c->watched_keys,wk);
 }
+
 
 /* Unwatch all the keys watched by this client. To clean the EXEC dirty
  * flag is up to the caller. */
@@ -254,17 +270,31 @@ void touchWatchedKeysOnFlush(int dbid) {
     }
 }
 
+/**
+ * 处理WATCH命令，用于监视一个或多个键的变化
+ *
+ * @param c 指向redis客户端结构体的指针，包含命令参数和客户端状态
+ *
+ * 该函数实现WATCH命令的功能，允许客户端监视指定的键，
+ * 当这些键在事务执行前被修改时，事务将被取消执行
+ */
 void watchCommand(redisClient *c) {
     int j;
 
+    /* 检查是否在MULTI事务中执行WATCH命令，如果是则返回错误 */
     if (c->flags & REDIS_MULTI) {
         addReplyError(c,"WATCH inside MULTI is not allowed");
         return;
     }
+
+    /* 遍历所有参数键，为每个键建立监视 */
     for (j = 1; j < c->argc; j++)
         watchForKey(c,c->argv[j]);
+
+    /* 向客户端返回操作成功的响应 */
     addReply(c,shared.ok);
 }
+
 
 void unwatchCommand(redisClient *c) {
     unwatchAllKeys(c);

@@ -312,13 +312,13 @@ typedef struct redisClient {
     redisDb *db;  // 当前客户端正在使用的db
     int dictid;
     sds querybuf;
-    int argc;
-    robj **argv;
+    int argc; // 保存客户端输入的命令行参数个数
+    robj **argv;  // 命令行参数 argv[0]是出入的command 后面紧跟参数
     struct redisCommand *cmd;
     int reqtype;
     int multibulklen;       /* number of multi bulk arguments left to read */
     long bulklen;           /* length of bulk argument in multi bulk request */
-    list *reply;
+    list *reply;    // 用于回复客户端消息的可变缓冲区
     int sentlen;
     time_t lastinteraction; /* time of the last interaction, used for timeout */
     int flags;              /* REDIS_SLAVE | REDIS_MONITOR | REDIS_MULTI ... */
@@ -336,7 +336,7 @@ typedef struct redisClient {
     dict *pubsub_channels;  /* channels a client is interested in (SUBSCRIBE) */
     list *pubsub_patterns;  /* patterns a client is interested in (SUBSCRIBE) */
 
-    /* Response buffer */
+    /* Response buffer 简短回复使用的固定缓冲去 16kb */
     int bufpos;
     char buf[REDIS_REPLY_CHUNK_BYTES];
 } redisClient;
@@ -510,10 +510,10 @@ typedef struct pubsubPattern {
 typedef void redisCommandProc(redisClient *c);
 typedef void redisVmPreloadProc(redisClient *c, struct redisCommand *cmd, int argc, robj **argv);
 struct redisCommand {
-    char *name;
-    redisCommandProc *proc;
-    int arity;
-    int flags;
+    char *name;  // 命令的名称
+    redisCommandProc *proc; // 命令的函数指针
+    int arity;  // 参数个数 如果为-则表示大于等于
+    int flags;  // 命令标志位 标志这个命令所具备的一些属性
     /* Use a function to determine which keys need to be loaded
      * in the background prior to executing this command. Takes precedence
      * over vm_firstkey and others, ignored when NULL */
