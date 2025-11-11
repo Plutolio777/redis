@@ -8,18 +8,36 @@
 /* ---------------------------------- MASTER -------------------------------- */
 
 /*
- *  向从节点实时同步数据
+ * 向从节点实时同步数据
+ *
+ * 该函数用于将主节点执行的命令实时传播给所有处于可接收状态的从节点。
+ * 它会构造符合 Redis 协议格式的命令数据，并发送给每个从节点。
+ *
+ * 参数:
+ *   slaves  - 从节点客户端列表，包含所有连接到主节点的从节点
+ *   dictid  - 当前操作的数据库编号（即 SELECT 的数据库）
+ *   argv    - 命令及其参数的 robj 数组
+ *   argc    - 命令参数的数量
+ *
+ * 返回值:
+ *   无返回值
  */
 void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
     listNode *ln;
     listIter li;
     int outc = 0, j;
     robj **outv;
-    /* We need 1+(ARGS*3) objects since commands are using the new protocol
-     * and we one 1 object for the first "*<count>\r\n" multibulk count, then
-     * for every additional object we have "$<count>\r\n" + object + "\r\n". */
+
+    /* 计算所需对象数量：1个用于 multibulk 长度头，每个参数需要3个对象：
+     * "$<长度>\r\n"、参数对象、"\r\n"。因此总共需要 1 + argc * 3 个对象 */
     robj *static_outv[REDIS_STATIC_ARGS*3+1];
     robj *lenobj;
+
+    /*
+     * 如果参数较少则使用栈上预分配的数组，否则动态分配内存
+     * argc * 3 + 1 是符合multibulk协议
+     *
+     */
 
     if (argc <= REDIS_STATIC_ARGS) {
         outv = static_outv;
@@ -27,34 +45,38 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
         outv = zmalloc(sizeof(robj*)*(argc*3+1));
     }
 
+    /* 构造 multibulk 协议头部 "*<参数个数>\r\n" 并加入输出数组 */
     lenobj = createObject(REDIS_STRING, sdscatprintf(sdsempty(), "*%d\r\n", argc));
     lenobj->refcount = 0;
     outv[outc++] = lenobj;
+
+    /* 为每个参数构造协议格式并加入输出数组：
+     * "$<参数长度>\r\n" + 参数内容 + "\r\n" */
     for (j = 0; j < argc; j++) {
-        lenobj = createObject(REDIS_STRING,
-            sdscatprintf(sdsempty(),"$%lu\r\n",
-                (unsigned long) stringObjectLen(argv[j])));
+        lenobj = createObject(REDIS_STRING, sdscatprintf(sdsempty(),"$%lu\r\n", (unsigned long) stringObjectLen(argv[j])));
         lenobj->refcount = 0;
         outv[outc++] = lenobj;
         outv[outc++] = argv[j];
         outv[outc++] = shared.crlf;
     }
 
-    /* Increment all the refcounts at start and decrement at end in order to
-     * be sure to free objects if there is no slave in a replication state
-     * able to be feed with commands */
+    /* 增加所有输出对象的引用计数，确保在发送过程中不会被释放；
+     * 在发送完成后统一减少引用计数以释放资源 */
     for (j = 0; j < outc; j++) incrRefCount(outv[j]);
+
+    /* 遍历所有从节点，向符合条件的从节点发送数据 */
     listRewind(slaves,&li);
     while((ln = listNext(&li))) {
         redisClient *slave = ln->value;
 
-        /* Don't feed slaves that are still waiting for BGSAVE to start */
+        /* 跳过尚未准备好接收数据的从节点（等待 BGSAVE 启动） */
         if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START) continue;
 
-        /* Feed all the other slaves, MONITORs and so on */
+        /* 如果当前数据库与从节点所处数据库不同，则先发送 SELECT 命令切换数据库 */
         if (slave->slaveseldb != dictid) {
             robj *selectcmd;
 
+            /* 根据数据库编号选择对应的共享 SELECT 命令对象或动态创建 */
             switch(dictid) {
             case 0: selectcmd = shared.select0; break;
             case 1: selectcmd = shared.select1; break;
@@ -74,11 +96,20 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
             addReply(slave,selectcmd);
             slave->slaveseldb = dictid;
         }
+
+        /*
+         * 将构造好的命令数据逐个发送给该从节点
+         * 这个地方的 addReply 在进行BGSAVE时是不会立即发送的 BGSAVE之后的命令会暂存
+         *
+         */
         for (j = 0; j < outc; j++) addReply(slave,outv[j]);
     }
+
+    /* 减少所有输出对象的引用计数，释放动态分配的内存（如果有的话） */
     for (j = 0; j < outc; j++) decrRefCount(outv[j]);
     if (outv != static_outv) zfree(outv);
 }
+
 
 void replicationFeedMonitors(list *monitors, int dictid, robj **argv, int argc) {
     listNode *ln;
@@ -162,6 +193,7 @@ void syncCommand(redisClient *c) {
         if (ln) {
             /* Perfect, the server is already registering differences for
              * another slave. Set the right state, and copy the buffer. */
+            // 在bgsave时所有新产生的命令都会通过addReply保存在回复列表中 因此需要将这写命令复制到新来的slave中
             listRelease(c->reply);
             c->reply = listDup(slave->reply);
             c->replstate = REDIS_REPL_WAIT_BGSAVE_END;
@@ -234,6 +266,7 @@ void sendBulkToSlave(aeEventLoop *el, int fd, void *privdata, int mask) {
         slave->repldbfd = -1;
         aeDeleteFileEvent(server.el,slave->fd,AE_WRITABLE);
         slave->replstate = REDIS_REPL_ONLINE;
+        // 开启sendReplyToClient处理器之后会发送 bgsave期间所有新cmd 以及后续完成同步之后的命令传播cmd也会通过这个进行发送
         if (aeCreateFileEvent(server.el, slave->fd, AE_WRITABLE, sendReplyToClient, slave) == AE_ERR) {
             freeClient(slave);
             return;
@@ -258,7 +291,7 @@ void updateSlavesWaitingBgsave(int bgsaveerr) {
     while((ln = listNext(&li))) {
         redisClient *slave = ln->value;
 
-        // 这里如果还有savle没有进入REDIS_REPL_WAIT_BGSAVE_END 则后续要立马再进行bgsave
+        // 这里如果还有salve没有进入REDIS_REPL_WAIT_BGSAVE_END 则后续要立马再进行bgsave
         if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START) {
             startbgsave = 1;
             slave->replstate = REDIS_REPL_WAIT_BGSAVE_END;

@@ -1003,7 +1003,12 @@ void call(redisClient *c) {
     if (server.appendonly && dirty > 0)
         feedAppendOnlyFile(c->cmd,c->db->id,c->argv,c->argc);
 
-    /* 命令传播 如果有数据变更或命令强制要求复制，且存在从服务器，则向从服务器发送复制数据 */
+    /*
+     * 命令传播 如果有数据变更或命令强制要求复制，且存在从服务器，则向从服务器发送复制数据
+     * 1.当sync执行时 bgsave在后台执行 这个是salve是不会监听writable事件并绑定 sendReplyToClient 事件的因此 所有的新cmd都只会暂时存在 c->reply中
+     * 2.当sync执行完成之后 sendReplyToClient 会一直打开 只要有新的cmd都会发送给slave
+     *
+     */
     if ((dirty > 0 || c->cmd->flags & REDIS_CMD_FORCE_REPLICATION) && listLength(server.slaves))
         replicationFeedSlaves(server.slaves,c->db->id,c->argv,c->argc);
 
@@ -1082,8 +1087,7 @@ int processCommand(redisClient *c) {
     if (server.masterhost && server.replstate != REDIS_REPL_CONNECTED && server.repl_serve_stale_data == 0 &&
         c->cmd->proc != infoCommand && c->cmd->proc != slaveofCommand)
     {
-        addReplyError(c,
-            "link with MASTER is down and slave-serve-stale-data is set to no");
+        addReplyError(c, "link with MASTER is down and slave-serve-stale-data is set to no");
         return REDIS_OK;
     }
 
@@ -1095,9 +1099,7 @@ int processCommand(redisClient *c) {
     }
 
     /* Exec the command */
-    if (c->flags & REDIS_MULTI &&
-        c->cmd->proc != execCommand && c->cmd->proc != discardCommand &&
-        c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)
+    if (c->flags & REDIS_MULTI && c->cmd->proc != execCommand && c->cmd->proc != discardCommand && c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)
     {
         queueMultiCommand(c);
         addReply(c,shared.queued);
