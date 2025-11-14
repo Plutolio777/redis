@@ -42,10 +42,25 @@
 
 #define REDIS_SYNCIO_RESOLUTION 10 /* Resolution in milliseconds */
 
-/* Write the specified payload to 'fd'. If writing the whole payload will be
- * done within 'timeout' milliseconds the operation succeeds and 'size' is
- * returned. Otherwise the operation fails, -1 is returned, and an unspecified
- * partial write could be performed against the file descriptor. */
+
+/**
+ * 同步写入数据到文件描述符
+ *
+ * @param fd 文件描述符
+ * @param ptr 指向要写入数据的缓冲区指针
+ * @param size 要写入的数据大小
+ * @param timeout 写入操作的超时时间（毫秒）
+ * @return 成功时返回写入的字节数，超时或出错时返回-1
+ *
+ * @details
+ * 该函数以阻塞方式将指定数据写入文件描述符，具有以下特点：
+ * 1. 使用乐观写入策略，先尝试写入数据再检查可写性
+ * 2. 如果一次写入未完成所有数据，会循环继续写入直到完成或超时
+ * 3. 使用 [aeWait](file://E:\MyFactory\redis\src\ae.c#L429-L447) 函数等待文件描述符变为可写状态
+ * 4. 当超过指定超时时会设置 `errno` 为 `ETIMEDOUT` 并返回-1
+ *
+ * 主要用于需要保证原子性的同步I/O操作，如 `SYNC` 命令和 `MIGRATE` 命令。
+ */
 ssize_t syncWrite(int fd, char *ptr, ssize_t size, long long timeout) {
     ssize_t nwritten, ret = size;
     long long start = mstime();
@@ -77,6 +92,7 @@ ssize_t syncWrite(int fd, char *ptr, ssize_t size, long long timeout) {
         remaining = timeout - elapsed;
     }
 }
+
 
 /* Read the specified amount of bytes from 'fd'. If all the bytes are read
  * within 'timeout' milliseconds the operation succeed and 'size' is returned.

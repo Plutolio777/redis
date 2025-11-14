@@ -794,8 +794,7 @@ int rdbSaveBackground(char *filename) {
         latencyAddSampleIfNeeded("fork",server.stat_fork_time/1000);
         if (childpid == -1) {
             server.lastbgsave_status = REDIS_ERR;
-            redisLog(REDIS_WARNING,"Can't save in background: fork: %s",
-                strerror(errno));
+            redisLog(REDIS_WARNING,"Can't save in background: fork: %s", strerror(errno));
             return REDIS_ERR;
         }
         redisLog(REDIS_NOTICE,"Background saving started by pid %d",childpid);
@@ -1397,9 +1396,13 @@ int rdbSaveToSlavesSockets(void) {
 
     if (server.rdb_child_pid != -1) return REDIS_ERR;
 
-    /* Before to fork, create a pipe that will be used in order to
+    /*
+     * 创建管道用于父子进程之间的通信
+     *
+     * Before to fork, create a pipe that will be used in order to
      * send back to the parent the IDs of the slaves that successfully
-     * received all the writes. */
+     * received all the writes.
+     */
     if (pipe(pipefds) == -1) return REDIS_ERR;
     server.rdb_pipe_read_result_from_child = pipefds[0];
     server.rdb_pipe_write_result_to_parent = pipefds[1];
@@ -1439,9 +1442,12 @@ int rdbSaveToSlavesSockets(void) {
         rioInitWithFdset(&slave_sockets,fds,numfds);
         zfree(fds);
 
+        // 这个关闭操作是在子进程中 不影响父进程
         closeListeningSockets(0);
         redisSetProcTitle("redis-rdb-to-slaves");
 
+
+        // 这里面会将rdb文件通过socket发送给slave
         retval = rdbSaveRioWithEOFMark(&slave_sockets,NULL);
         if (retval == REDIS_OK && rioFlush(&slave_sockets) == 0)
             retval = REDIS_ERR;
@@ -1449,6 +1455,8 @@ int rdbSaveToSlavesSockets(void) {
         if (retval == REDIS_OK) {
             size_t private_dirty = zmalloc_get_private_dirty();
 
+
+            // 打印一下cow过程中产生的脏页大小
             if (private_dirty) {
                 redisLog(REDIS_NOTICE,
                     "RDB: %zu MB of memory used by copy-on-write",
@@ -1486,9 +1494,7 @@ int rdbSaveToSlavesSockets(void) {
              * with an error so that the parent will abort the replication
              * process with all the childre that were waiting. */
             msglen = sizeof(uint64_t)*(1+2*numfds);
-            if (*len == 0 ||
-                write(server.rdb_pipe_write_result_to_parent,msg,msglen)
-                != msglen)
+            if (*len == 0 || write(server.rdb_pipe_write_result_to_parent,msg,msglen) != msglen)
             {
                 retval = REDIS_ERR;
             }
@@ -1501,13 +1507,16 @@ int rdbSaveToSlavesSockets(void) {
         server.stat_fork_time = ustime()-start;
         server.stat_fork_rate = (double) zmalloc_used_memory() * 1000000 / server.stat_fork_time / (1024*1024*1024); /* GB per second. */
         latencyAddSampleIfNeeded("fork",server.stat_fork_time/1000);
+
+        // fork失败处理流程
         if (childpid == -1) {
-            redisLog(REDIS_WARNING,"Can't save in background: fork: %s",
-                strerror(errno));
+            redisLog(REDIS_WARNING,"Can't save in background: fork: %s", strerror(errno));
 
             /* Undo the state change. The caller will perform cleanup on
              * all the slaves in BGSAVE_START state, but an early call to
              * replicationSetupSlaveForFullResync() turned it into BGSAVE_END */
+
+            // 所有slave重新标记为等待bgsave状态
             listRewind(server.slaves,&li);
             while((ln = listNext(&li))) {
                 redisClient *slave = ln->value;
@@ -1520,11 +1529,11 @@ int rdbSaveToSlavesSockets(void) {
                     }
                 }
             }
+            // 关闭父子进程之间的通信管道
             close(pipefds[0]);
             close(pipefds[1]);
         } else {
-            redisLog(REDIS_NOTICE,"Background RDB transfer started by pid %d",
-                childpid);
+            redisLog(REDIS_NOTICE,"Background RDB transfer started by pid %d", childpid);
             server.rdb_save_time_start = time(NULL);
             server.rdb_child_pid = childpid;
             server.rdb_child_type = REDIS_RDB_CHILD_TYPE_SOCKET;
