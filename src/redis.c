@@ -819,8 +819,7 @@ void activeExpireCycle(int type) {
 }
 
 void updateLRUClock(void) {
-    server.lruclock = (server.unixtime/REDIS_LRU_CLOCK_RESOLUTION) &
-                                                REDIS_LRU_CLOCK_MAX;
+    server.lruclock = (server.unixtime/REDIS_LRU_CLOCK_RESOLUTION) & REDIS_LRU_CLOCK_MAX;
 }
 
 
@@ -1067,7 +1066,9 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         }
     }
 
-    /* Show information about connected clients */
+    /*
+     * 哨兵模式打印连接信息
+     * Show information about connected clients */
     if (!server.sentinel_mode) {
         run_with_period(5000) {
             redisLog(REDIS_VERBOSE,
@@ -1309,6 +1310,7 @@ void createSharedObjects(void) {
 void initServerConfig(void) {
     int j;
 
+    // 为当前主机创建随机的run id
     getRandomHexChars(server.runid,REDIS_RUN_ID_SIZE);
     server.configfile = NULL;
     server.hz = REDIS_DEFAULT_HZ;
@@ -1386,11 +1388,12 @@ void initServerConfig(void) {
     server.loading_process_events_interval_bytes = (1024*1024*2);
 
     updateLRUClock();
+    // 重置服务器持久化配置
     resetServerSaveParams();
-
     appendServerSaveParams(60*60,1);  /* save after 1 hour and 1 change */
     appendServerSaveParams(300,100);  /* save after 5 minutes and 100 changes */
     appendServerSaveParams(60,10000); /* save after 1 minute and 10000 changes */
+
     /* Replication related */
     server.masterauth = NULL;
     server.masterhost = NULL;
@@ -1669,17 +1672,25 @@ void initServer(void) {
     server.unblocked_clients = listCreate();
     server.ready_keys = listCreate();
 
+
+    // 创建系统中的共享对象
     createSharedObjects();
+    // 调整最大使用的文件句柄数
     adjustOpenFilesLimit();
+    // 创建时间循环实例
     server.el = aeCreateEventLoop(server.maxclients+REDIS_EVENTLOOP_FDSET_INCR);
+    // 分配数据库内存空间
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
 
-    /* Open the TCP listening socket for the user commands. */
-    if (server.port != 0 &&
-        listenToPort(server.port,server.ipfd,&server.ipfd_count) == REDIS_ERR)
+    /*
+     * 启动TCP监听
+     * Open the TCP listening socket for the user commands. */
+    if (server.port != 0 && listenToPort(server.port,server.ipfd,&server.ipfd_count) == REDIS_ERR)
         exit(1);
 
-    /* Open the listening Unix domain socket. */
+    /*
+     * 启动柜unix socket监听
+     * Open the listening Unix domain socket. */
     if (server.unixsocket != NULL) {
         unlink(server.unixsocket); /* don't care if this fails */
         server.sofd = anetUnixServer(server.neterr,server.unixsocket,
@@ -1697,7 +1708,9 @@ void initServer(void) {
         exit(1);
     }
 
-    /* Create the Redis databases, and initialize other internal state. */
+    /*
+     * 创建数据库实例使用到的数据
+     * Create the Redis databases, and initialize other internal state. */
     for (j = 0; j < server.dbnum; j++) {
         server.db[j].dict = dictCreate(&dbDictType,NULL);
         server.db[j].expires = dictCreate(&keyptrDictType,NULL);
@@ -1715,6 +1728,7 @@ void initServer(void) {
     server.rdb_child_pid = -1;
     server.aof_child_pid = -1;
     server.rdb_child_type = REDIS_RDB_CHILD_TYPE_NONE;
+    // 重置aof重写缓冲区
     aofRewriteBufferReset();
     server.aof_buf = sdsempty();
     server.lastsave = time(NULL); /* At startup we consider the DB saved. */
@@ -1722,6 +1736,7 @@ void initServer(void) {
     server.rdb_save_time_last = -1;
     server.rdb_save_time_start = -1;
     server.dirty = 0;
+    // 重置服务器状态
     resetServerStats();
     /* A few stats we don't want to reset: server startup time, and peak mem. */
     server.stat_starttime = time(NULL);
@@ -1731,32 +1746,39 @@ void initServer(void) {
     server.aof_last_write_status = REDIS_OK;
     server.aof_last_write_errno = 0;
     server.repl_good_slaves_count = 0;
+    // 更新系统时间缓存
     updateCachedTime();
 
-    /* Create the serverCron() time event, that's our main way to process
+    /*
+     * 创建系统定时任务
+     * Create the serverCron() time event, that's our main way to process
      * background operations. */
     if(aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR) {
         redisPanic("Can't create the serverCron time event.");
         exit(1);
     }
 
-    /* Create an event handler for accepting new connections in TCP and Unix
+    /*
+     * 创建TCP连接处理任务
+     * Create an event handler for accepting new connections in TCP and Unix
      * domain sockets. */
     for (j = 0; j < server.ipfd_count; j++) {
-        if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
-            acceptTcpHandler,NULL) == AE_ERR)
+        if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE, acceptTcpHandler,NULL) == AE_ERR)
             {
                 redisPanic(
                     "Unrecoverable error creating server.ipfd file event.");
             }
     }
+
+    // 创建UNIX SOCKET处理任务
     if (server.sofd > 0 && aeCreateFileEvent(server.el,server.sofd,AE_READABLE,
         acceptUnixHandler,NULL) == AE_ERR) redisPanic("Unrecoverable error creating server.sofd file event.");
 
-    /* Open the AOF file if needed. */
+    /*
+     * 如果开启了AOF需要加载aof文件描述符 用来保存操作指令
+     * Open the AOF file if needed. */
     if (server.aof_state == REDIS_AOF_ON) {
-        server.aof_fd = open(server.aof_filename,
-                               O_WRONLY|O_APPEND|O_CREAT,0644);
+        server.aof_fd = open(server.aof_filename, O_WRONLY|O_APPEND|O_CREAT,0644);
         if (server.aof_fd == -1) {
             redisLog(REDIS_WARNING, "Can't open the append-only file: %s",
                 strerror(errno));
@@ -1764,7 +1786,10 @@ void initServer(void) {
         }
     }
 
-    /* 32 bit instances are limited to 4GB of address space, so if there is
+    /*
+     * 这里因为32位系统最大内存为3G 所以需要强制调整最大内存为3G
+     *
+     * 32 bit instances are limited to 4GB of address space, so if there is
      * no explicit limit in the user provided configuration we set a limit
      * at 3 GB using maxmemory with 'noeviction' policy'. This avoids
      * useless crashes of the Redis instance for out of memory. */
@@ -1774,10 +1799,15 @@ void initServer(void) {
         server.maxmemory_policy = REDIS_MAXMEMORY_NO_EVICTION;
     }
 
+    // 初始化复制脚本缓存
     replicationScriptCacheInit();
+    // lua脚本初始化
     scriptingInit();
+    // 慢查询初始化
     slowlogInit();
+    // 延迟监视器初始化
     latencyMonitorInit();
+
     bioInit();
 }
 
@@ -3293,16 +3323,30 @@ int main(int argc, char **argv) {
     gettimeofday(&tv,NULL);
     dictSetHashFunctionSeed(tv.tv_sec^tv.tv_usec^getpid());
     server.sentinel_mode = checkForSentinelMode(argc,argv);
+
+    // 记载redis的默认配置
     initServerConfig();
 
-    /* We need to init sentinel right now as parsing the configuration file
+    /*
+     *
+     * 哨兵模式下需要做其他操作
+     *
+     * We need to init sentinel right now as parsing the configuration file
      * in sentinel mode will have the effect of populating the sentinel
-     * data structures with master nodes to monitor. */
+     * data structures with master nodes to monitor.
+     */
     if (server.sentinel_mode) {
+        // 修改服务监听端口为哨兵模式专用端口
         initSentinelConfig();
+        /*
+         * 1.替换服务器命令为哨兵模式专属命令
+         * 2.创建 初始化 Sentinel State
+         */
         initSentinel();
     }
 
+
+    // 处理命令行参数
     if (argc >= 2) {
         int j = 1; /* First option to parse in argv[] */
         sds options = sdsempty();
@@ -3345,14 +3389,15 @@ int main(int argc, char **argv) {
             j++;
         }
         if (server.sentinel_mode && configfile && *configfile == '-') {
-            redisLog(REDIS_WARNING,
-                "Sentinel config from STDIN not allowed.");
-            redisLog(REDIS_WARNING,
-                "Sentinel needs config file on disk to save state.  Exiting...");
+            redisLog(REDIS_WARNING, "Sentinel config from STDIN not allowed.");
+            redisLog(REDIS_WARNING, "Sentinel needs config file on disk to save state.  Exiting...");
             exit(1);
         }
-        if (configfile) server.configfile = getAbsolutePath(configfile);
+        if (configfile)
+            server.configfile = getAbsolutePath(configfile);
+        // 由于将从配置文件加载配置 因此需要重置保存配置
         resetServerSaveParams();
+        // 从文件中加载对应的配置
         loadServerConfig(configfile,options);
         sdsfree(options);
     } else {
@@ -3371,12 +3416,14 @@ int main(int argc, char **argv) {
         linuxMemoryWarnings();
     #endif
         checkTcpBacklogSettings();
+        // 加载持久化文件
         loadDataFromDisk();
         if (server.ipfd_count > 0)
             redisLog(REDIS_NOTICE,"The server is now ready to accept connections on port %d", server.port);
         if (server.sofd > 0)
             redisLog(REDIS_NOTICE,"The server is now ready to accept connections at %s", server.unixsocket);
     } else {
+        // 哨兵模式下不需要加载rdb文件 因为不适用数据库
         sentinelIsRunning();
     }
 

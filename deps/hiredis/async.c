@@ -62,8 +62,7 @@ void __redisAppendCommand(redisContext *c, char *cmd, size_t len);
 
 /* Functions managing dictionary of callbacks for pub/sub. */
 static unsigned int callbackHash(const void *key) {
-    return dictGenHashFunction((const unsigned char *)key,
-                               sdslen((const sds)key));
+    return dictGenHashFunction((const unsigned char *)key, sdslen((const sds)key));
 }
 
 static void *callbackValDup(void *privdata, const void *src) {
@@ -165,13 +164,33 @@ redisAsyncContext *redisAsyncConnect(const char *ip, int port) {
     return ac;
 }
 
-redisAsyncContext *redisAsyncConnectBind(const char *ip, int port,
-                                         const char *source_addr) {
+
+/**
+ * 异步连接到Redis服务器
+ *
+ * 该函数创建一个异步Redis连接上下文，用于与指定的Redis服务器建立非阻塞连接。
+ * 连接将绑定到指定的本地源地址。
+ *
+ * @param ip Redis服务器的IP地址或主机名
+ * @param port Redis服务器的端口号
+ * @param source_addr 本地源地址，用于绑定客户端连接的本地接口
+ *
+ * @return 返回一个redisAsyncContext指针，表示异步连接上下文。
+ *         如果连接失败，返回NULL或包含错误信息的上下文。
+ */
+redisAsyncContext *redisAsyncConnectBind(const char *ip, int port, const char *source_addr) {
+    /* 创建非阻塞的同步的连接上下文 */
     redisContext *c = redisConnectBindNonBlock(ip,port,source_addr);
+
+    /* 初始化异步连接上下文 */
     redisAsyncContext *ac = redisAsyncInitialize(c);
+
+    /* 复制可能存在的错误信息到异步上下文 */
     __redisAsyncCopyError(ac);
+
     return ac;
 }
+
 
 redisAsyncContext *redisAsyncConnectUnix(const char *path) {
     redisContext *c;
@@ -567,7 +586,23 @@ static char *nextArgument(char *start, char **str, size_t *len) {
 
 /* Helper function for the redisAsyncCommand* family of functions. Writes a
  * formatted command to the output buffer and registers the provided callback
- * function with the context. */
+ * function with the context.
+ * 函数名: __redisAsyncCommand
+ * 描述:   异步 Redis 命令执行的核心辅助函数。该函数将格式化后的命令写入输出缓冲区，
+ *         并注册用户提供的回调函数与上下文关联。
+ *
+ * 参数:
+ *   ac       - 指向异步 Redis 上下文的指针，用于管理连接和状态。
+ *   fn       - 用户定义的回调函数，在收到响应时被调用。
+ *   privdata - 回调函数所需的私有数据指针。
+ *   cmd      - 已经格式化的 Redis 命令字符串（RESP 协议格式）。
+ *   len      - 命令字符串的长度。
+ *
+ * 返回值:
+ *   REDIS_OK  - 成功将命令加入发送队列。
+ *   REDIS_ERR - 当前连接正在关闭或释放中，无法接受新命令。
+ */
+
 static int __redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void *privdata, char *cmd, size_t len) {
     redisContext *c = &(ac->c);
     redisCallback cb;
@@ -577,7 +612,9 @@ static int __redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void 
     char *p;
     sds sname;
 
-    /* Don't accept new commands when the connection is about to be closed. */
+    /*
+     * 根据上下文标志确认连接是否正常
+     * Don't accept new commands when the connection is about to be closed. */
     if (c->flags & (REDIS_DISCONNECTING | REDIS_FREEING)) return REDIS_ERR;
 
     /* Setup callback */
@@ -603,7 +640,8 @@ static int __redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void 
             else
                 dictReplace(ac->sub.channels,sname,&cb);
         }
-    } else if (strncasecmp(cstr,"unsubscribe\r\n",13) == 0) {
+    }
+    else if (strncasecmp(cstr,"unsubscribe\r\n",13) == 0) {
         /* It is only useful to call (P)UNSUBSCRIBE when the context is
          * subscribed to one or more channels or patterns. */
         if (!(c->flags & REDIS_SUBSCRIBED)) return REDIS_ERR;
@@ -611,11 +649,13 @@ static int __redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void 
         /* (P)UNSUBSCRIBE does not have its own response: every channel or
          * pattern that is unsubscribed will receive a message. This means we
          * should not append a callback function for this command. */
-     } else if(strncasecmp(cstr,"monitor\r\n",9) == 0) {
+    }
+    else if(strncasecmp(cstr,"monitor\r\n",9) == 0) {
          /* Set monitor flag and push callback */
          c->flags |= REDIS_MONITORING;
          __redisPushCallback(&ac->replies,&cb);
-    } else {
+    }
+    else {
         if (c->flags & REDIS_SUBSCRIBED)
             /* This will likely result in an error reply, but it needs to be
              * received and passed to the callback. */
@@ -642,14 +682,28 @@ int redisvAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void *privdat
     return status;
 }
 
+
+/**
+ * 异步执行Redis命令
+ *
+ * @param ac Redis异步上下文对象，用于维护与Redis服务器的连接状态
+ * @param fn 命令执行完成后的回调函数指针，用于处理响应结果
+ * @param privdata 用户自定义数据指针，会在回调函数中传回给用户
+ * @param format 命令格式化字符串，类似于printf的格式
+ * @param ... 可变参数列表，用于填充命令格式化字符串中的占位符
+ *
+ * @return 返回执行状态码，REDIS_OK表示成功，其他值表示失败
+ */
 int redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void *privdata, const char *format, ...) {
     va_list ap;
     int status;
+    // 拼接命令
     va_start(ap,format);
     status = redisvAsyncCommand(ac,fn,privdata,format,ap);
     va_end(ap);
     return status;
 }
+
 
 int redisAsyncCommandArgv(redisAsyncContext *ac, redisCallbackFn *fn, void *privdata, int argc, const char **argv, const size_t *argvlen) {
     char *cmd;

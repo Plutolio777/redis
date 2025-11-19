@@ -99,7 +99,9 @@ static int redisCreateSocket(redisContext *c, int type) {
 static int redisSetBlocking(redisContext *c, int blocking) {
     int flags;
 
-    /* Set the socket nonblocking.
+    /*
+     * 获取当前socket flags
+     * Set the socket nonblocking.
      * Note that fcntl(2) for F_GETFL and F_SETFL can't be
      * interrupted by a signal. */
     if ((flags = fcntl(c->fd, F_GETFL)) == -1) {
@@ -279,10 +281,12 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
         }
     }
     for (p = servinfo; p != NULL; p = p->ai_next) {
-        if ((s = socket(p->ai_family,p->ai_socktype,p->ai_protocol)) == -1)
+        // 创建socket
+        if ((s = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1)
             continue;
 
         c->fd = s;
+        // 将socket设置为非阻塞
         if (redisSetBlocking(c,0) != REDIS_OK)
             goto error;
         if (source_addr) {
@@ -294,6 +298,7 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
                 __redisSetError(c,REDIS_ERR_OTHER,buf);
                 goto error;
             }
+            // socket绑定对应主机的地址
             for (b = bservinfo; b != NULL; b = b->ai_next) {
                 if (bind(s,b->ai_addr,b->ai_addrlen) != -1) {
                     bound = 1;
@@ -308,6 +313,8 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
                 goto error;
             }
         }
+
+        // 向对应主机发起连接
         if (connect(s,p->ai_addr,p->ai_addrlen) == -1) {
             if (errno == EHOSTUNREACH) {
                 redisContextCloseFd(c);

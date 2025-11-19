@@ -563,7 +563,7 @@ redisReader *redisReaderCreate(void) {
     r->err = 0;
     r->errstr[0] = '\0';
     r->fn = &defaultFunctions;
-    r->buf = sdsempty();
+    r->buf = sdsempty(); // 读取缓冲区
     r->maxbuf = REDIS_READER_MAX_BUF;
     if (r->buf == NULL) {
         free(r);
@@ -989,14 +989,15 @@ void __redisSetError(redisContext *c, int type, const char *str) {
 static redisContext *redisContextInit(void) {
     redisContext *c;
 
+    // 创建redis连接上下文
     c = calloc(1,sizeof(redisContext));
     if (c == NULL)
         return NULL;
 
     c->err = 0;
     c->errstr[0] = '\0';
-    c->obuf = sdsempty();
-    c->reader = redisReaderCreate();
+    c->obuf = sdsempty(); // 写入缓冲区
+    c->reader = redisReaderCreate(); // 创建用于读取socket数据的reader
     return c;
 }
 
@@ -1056,10 +1057,11 @@ redisContext *redisConnectNonBlock(const char *ip, int port) {
     return c;
 }
 
-redisContext *redisConnectBindNonBlock(const char *ip, int port,
-                                       const char *source_addr) {
+redisContext *redisConnectBindNonBlock(const char *ip, int port, const char *source_addr) {
+    // 创建redis连接上下文
     redisContext *c = redisContextInit();
     c->flags &= ~REDIS_BLOCK;
+    // 创建tcp连接
     redisContextConnectBindTcp(c,ip,port,NULL,source_addr);
     return c;
 }
