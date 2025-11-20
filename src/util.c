@@ -44,8 +44,7 @@
 #include "sha1.h"
 
 /* Glob-style pattern matching. */
-int stringmatchlen(const char *pattern, int patternLen,
-        const char *string, int stringLen, int nocase)
+int stringmatchlen(const char *pattern, int patternLen, const char *string, int stringLen, int nocase)
 {
     while(patternLen) {
         switch(pattern[0]) {
