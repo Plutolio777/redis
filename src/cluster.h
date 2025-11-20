@@ -80,10 +80,10 @@ typedef struct clusterNodeFailReport {
 } clusterNodeFailReport;
 
 typedef struct clusterNode {
-    mstime_t ctime; /* Node object creation time. */
-    char name[REDIS_CLUSTER_NAMELEN]; /* Node name, hex string, sha1-size */
+    mstime_t ctime; /* Node object creation time. 创建节点的时间*/
+    char name[REDIS_CLUSTER_NAMELEN]; /* Node name, hex string, sha1-size 节点名称*/
     int flags;      /* REDIS_NODE_... */
-    uint64_t configEpoch; /* Last configEpoch observed for this node */
+    uint64_t configEpoch; /* Last configEpoch observed for this node 节点的配置纪元*/
     unsigned char slots[REDIS_CLUSTER_SLOTS/8]; /* slots handled by this node */
     int numslots;   /* Number of slots handled by this node */
     int numslaves;  /* Number of slave nodes, if this is a master */
@@ -101,10 +101,12 @@ typedef struct clusterNode {
     long long repl_offset;      /* Last known repl offset for this node. */
     char ip[REDIS_IP_STR_LEN];  /* Latest known IP address of this node */
     int port;                   /* Latest known port of this node */
-    clusterLink *link;          /* TCP/IP link with this node */
+    clusterLink *link;          /* TCP/IP link with this node  保存了连接节点相关数据*/
     list *fail_reports;         /* List of nodes signaling this as failing */
 } clusterNode;
 
+
+// 记录了当前节点视角下 集群的各种状态
 typedef struct clusterState {
     clusterNode *myself;  /* This node */
     uint64_t currentEpoch;

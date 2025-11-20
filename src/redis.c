@@ -2059,9 +2059,7 @@ void call(redisClient *c, int flags) {
 
     /* Sent the command to clients in MONITOR mode, only if the commands are
      * not generated from reading an AOF. */
-    if (listLength(server.monitors) &&
-        !server.loading &&
-        !(c->cmd->flags & (REDIS_CMD_SKIP_MONITOR|REDIS_CMD_ADMIN)))
+    if (listLength(server.monitors) && !server.loading && !(c->cmd->flags & (REDIS_CMD_SKIP_MONITOR|REDIS_CMD_ADMIN)))
     {
         replicationFeedMonitors(c,server.monitors,c->db->id,c->argv,c->argc);
     }
@@ -2094,8 +2092,7 @@ void call(redisClient *c, int flags) {
     /* Log the command into the Slow log if needed, and populate the
      * per-command statistics that we show in INFO commandstats. */
     if (flags & REDIS_CALL_SLOWLOG && c->cmd->proc != execCommand) {
-        char *latency_event = (c->cmd->flags & REDIS_CMD_FAST) ?
-                              "fast-command" : "command";
+        char *latency_event = (c->cmd->flags & REDIS_CMD_FAST) ? "fast-command" : "command";
         latencyAddSampleIfNeeded(latency_event,duration/1000);
         slowlogPushEntryIfNeeded(c->argv,c->argc,duration);
     }
@@ -2159,12 +2156,14 @@ int processCommand(redisClient *c) {
      * such as wrong arity, bad command name and so forth. */
     c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr);
     if (!c->cmd) {
+        // 如果命令不存在则标记后续事务会执行失败
         flagTransaction(c);
         addReplyErrorFormat(c,"unknown command '%s'",
             (char*)c->argv[0]->ptr);
         return REDIS_OK;
     } else if ((c->cmd->arity > 0 && c->cmd->arity != c->argc) ||
                (c->argc < -c->cmd->arity)) {
+        // 如果提交的参数列表不合适会标记后续事务执行失败
         flagTransaction(c);
         addReplyErrorFormat(c,"wrong number of arguments for '%s' command",
             c->cmd->name);
@@ -2174,6 +2173,7 @@ int processCommand(redisClient *c) {
     /* Check if the user is authenticated */
     if (server.requirepass && !c->authenticated && c->cmd->proc != authCommand)
     {
+        // 如果未进行登录验证会标记后续事务执行失败
         flagTransaction(c);
         addReply(c,shared.noautherr);
         return REDIS_OK;
@@ -2192,8 +2192,7 @@ int processCommand(redisClient *c) {
     {
         int hashslot;
         int error_code;
-        clusterNode *n = getNodeByQuery(c,c->cmd,c->argv,c->argc,
-                                        &hashslot,&error_code);
+        clusterNode *n = getNodeByQuery(c,c->cmd,c->argv,c->argc, &hashslot,&error_code);
         if (n == NULL || n != server.cluster->myself) {
             if (c->cmd->proc == execCommand) {
                 discardTransaction(c);
@@ -2314,13 +2313,21 @@ int processCommand(redisClient *c) {
         return REDIS_OK;
     }
 
-    /* Exec the command */
+    /*
+     * 事务操作
+     * Exec the command */
     if (c->flags & REDIS_MULTI &&
         c->cmd->proc != execCommand && c->cmd->proc != discardCommand &&
         c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)
     {
+        // 如果当前客户端处于事务节点 将命令缓存起来
         queueMultiCommand(c);
         addReply(c,shared.queued);
+
+    /*
+     * 非事务操作以及 exec discard multi watch
+     *
+     */
     } else {
         call(c,REDIS_CALL_FULL);
         c->woff = server.master_repl_offset;
