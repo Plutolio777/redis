@@ -26,3 +26,6 @@ deps/lua/src/liblua.a
 .make-*
 .prerequisites
 *.dSYM
+.idea
+.clinerules
+/src/release.h
