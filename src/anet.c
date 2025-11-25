@@ -355,11 +355,9 @@ int anetTcpNonBlockConnect(char *err, char *addr, int port)
     return anetTcpGenericConnect(err,addr,port,NULL,ANET_CONNECT_NONBLOCK);
 }
 
-int anetTcpNonBlockBindConnect(char *err, char *addr, int port,
-                               char *source_addr)
+int anetTcpNonBlockBindConnect(char *err, char *addr, int port, char *source_addr)
 {
-    return anetTcpGenericConnect(err,addr,port,source_addr,
-            ANET_CONNECT_NONBLOCK);
+    return anetTcpGenericConnect(err,addr,port,source_addr, ANET_CONNECT_NONBLOCK);
 }
 
 int anetTcpNonBlockBestEffortBindConnect(char *err, char *addr, int port,
@@ -542,13 +540,24 @@ static int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *l
     return fd;
 }
 
+/**
+ * redis中通用用于处理连接请求的方法
+ * @param err 服务网络错误信息
+ * @param s server socket
+ * @param ip 用于保存客户端ip
+ * @param ip_len 用于保存客户端ip长度
+ * @param port 用于报错客户端连接端口
+ * @return
+ */
 int anetTcpAccept(char *err, int s, char *ip, size_t ip_len, int *port) {
     int fd;
     struct sockaddr_storage sa;
     socklen_t salen = sizeof(sa);
+    // 调用accept方法进行接收连接
     if ((fd = anetGenericAccept(err,s,(struct sockaddr*)&sa,&salen)) == -1)
         return ANET_ERR;
 
+    // 根据连接协议族获取ip地址和端口
     if (sa.ss_family == AF_INET) {
         struct sockaddr_in *s = (struct sockaddr_in *)&sa;
         if (ip) inet_ntop(AF_INET,(void*)&(s->sin_addr),ip,ip_len);

@@ -36,21 +36,33 @@ typedef struct aeApiState {
     struct epoll_event *events;
 } aeApiState;
 
+/**
+ * 创建多路复用IO（使用epoll模型）
+ * @param eventLoop 事件循环实体
+ * @return 返回0表示成功，-1表示失败
+ */
 static int aeApiCreate(aeEventLoop *eventLoop) {
+    // 创建API状态
     aeApiState *state = zmalloc(sizeof(aeApiState));
 
     if (!state) return -1;
+
+    // 准备用于epoll检查socket描述符的容器
     state->events = zmalloc(sizeof(struct epoll_event)*eventLoop->setsize);
     if (!state->events) {
         zfree(state);
         return -1;
     }
+
+    // 创建epoll句柄
     state->epfd = epoll_create(1024); /* 1024 is just a hint for the kernel */
     if (state->epfd == -1) {
         zfree(state->events);
         zfree(state);
         return -1;
     }
+
+    // 将多态state保存在事件循环的apidata中
     eventLoop->apidata = state;
     return 0;
 }
@@ -70,7 +82,15 @@ static void aeApiFree(aeEventLoop *eventLoop) {
     zfree(state);
 }
 
+/**
+ * 将指定的socket添加到epoll模型中
+ * @param eventLoop 事件循环实例
+ * @param fd 指定socket文件描述符
+ * @param mask 指定监听事件
+ * @return
+ */
 static int aeApiAddEvent(aeEventLoop *eventLoop, int fd, int mask) {
+    // 获取多路复用状态
     aeApiState *state = eventLoop->apidata;
     struct epoll_event ee;
     /* If the fd was already monitored for some event, we need a MOD

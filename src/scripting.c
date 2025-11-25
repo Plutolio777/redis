@@ -926,6 +926,11 @@ int luaCreateFunction(redisClient *c, lua_State *lua, char *funcname, robj *body
     return REDIS_OK;
 }
 
+/**
+ *
+ * @param c
+ * @param evalsha
+ */
 void evalGenericCommand(redisClient *c, int evalsha) {
     lua_State *lua = server.lua;
     char funcname[43];
@@ -1096,6 +1101,10 @@ void evalGenericCommand(redisClient *c, int evalsha) {
     }
 }
 
+/**
+ * 执行LUA脚本命令入口
+ * @param c 提交eval命令的客户端实例
+ */
 void evalCommand(redisClient *c) {
     evalGenericCommand(c,0);
 }

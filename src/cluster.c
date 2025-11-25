@@ -87,7 +87,13 @@ int clusterBumpConfigEpochWithoutConsensus(void);
  * when we lock the nodes.conf file, we create a zero-length one for the
  * sake of locking if it does not already exist), REDIS_ERR is returned.
  * If the configuration was loaded from the file, REDIS_OK is returned. */
+/**
+ * 加载集群配置
+ * @param filename 配置文件地址
+ * @return
+ */
 int clusterLoadConfig(char *filename) {
+    // 读取集群配置文件
     FILE *fp = fopen(filename,"r");
     struct stat sb;
     char *line;
@@ -104,7 +110,9 @@ int clusterLoadConfig(char *filename) {
         }
     }
 
-    /* Check if the file is zero-length: if so return REDIS_ERR to signal
+    /*
+     * 检查文件是否内容为空
+     * Check if the file is zero-length: if so return REDIS_ERR to signal
      * we have to write the config. */
     if (fstat(fileno(fp),&sb) != -1 && sb.st_size == 0) {
         fclose(fp);
@@ -164,7 +172,9 @@ int clusterLoadConfig(char *filename) {
             n = createClusterNode(argv[0],0);
             clusterAddNode(n);
         }
-        /* Address and port */
+        /*
+         * 解析地址
+         * Address and port */
         if ((p = strrchr(argv[1],':')) == NULL) goto fmterr;
         *p = '\0';
         memcpy(n->ip,argv[1],strlen(argv[1])+1);
@@ -200,7 +210,9 @@ int clusterLoadConfig(char *filename) {
             if (p) s = p+1;
         }
 
-        /* Get master if any. Set the master and populate master's
+        /*
+         * 处理从节点
+         * Get master if any. Set the master and populate master's
          * slave list. */
         if (argv[3][0] != '-') {
             master = clusterLookupNode(argv[3]);
@@ -398,6 +410,7 @@ int clusterLockConfig(char *filename) {
 void clusterInit(void) {
     int saveconf = 0;
 
+    // 创建集群状态实例对象
     server.cluster = zmalloc(sizeof(clusterState));
     server.cluster->myself = NULL;
     server.cluster->currentEpoch = 0;
@@ -418,22 +431,28 @@ void clusterInit(void) {
     memset(server.cluster->slots,0, sizeof(server.cluster->slots));
     clusterCloseAllSlots();
 
-    /* Lock the cluster config file to make sure every node uses
+    /*
+     * 为集群配置文件加锁
+     * Lock the cluster config file to make sure every node uses
      * its own nodes.conf. */
     if (clusterLockConfig(server.cluster_configfile) == REDIS_ERR)
         exit(1);
 
-    /* Load or create a new nodes configuration. */
+    /*
+     * 加载集群配置文件 （该文件为redis自己生成并管理）如果初次启动集群不会有这个文件 则需要先将自己加入到集群中 然后再保存配置文件
+     * Load or create a new nodes configuration. */
     if (clusterLoadConfig(server.cluster_configfile) == REDIS_ERR) {
-        /* No configuration found. We will just use the random name provided
+        /*
+         * 为自己创建一个节点实例并加入集群中
+         * No configuration found. We will just use the random name provided
          * by the createClusterNode() function. */
-        myself = server.cluster->myself =
-            createClusterNode(NULL,REDIS_NODE_MYSELF|REDIS_NODE_MASTER);
-        redisLog(REDIS_NOTICE,"No cluster configuration found, I'm %.40s",
-            myself->name);
+        myself = server.cluster->myself = createClusterNode(NULL,REDIS_NODE_MYSELF|REDIS_NODE_MASTER);
+        redisLog(REDIS_NOTICE,"No cluster configuration found, I'm %.40s", myself->name);
         clusterAddNode(myself);
         saveconf = 1;
     }
+
+    // 如果为首次启动集群 这里理应进行一次保存
     if (saveconf) clusterSaveConfigOrDie(1);
 
     /* We need a listening TCP port for our cluster messaging needs. */
@@ -451,18 +470,17 @@ void clusterInit(void) {
         exit(1);
     }
 
-    if (listenToPort(server.port+REDIS_CLUSTER_PORT_INCR,
-        server.cfd,&server.cfd_count) == REDIS_ERR)
+
+    // 创建本节点的用于集群操作的监听端口
+    if (listenToPort(server.port+REDIS_CLUSTER_PORT_INCR, server.cfd,&server.cfd_count) == REDIS_ERR)
     {
         exit(1);
     } else {
         int j;
 
         for (j = 0; j < server.cfd_count; j++) {
-            if (aeCreateFileEvent(server.el, server.cfd[j], AE_READABLE,
-                clusterAcceptHandler, NULL) == AE_ERR)
-                    redisPanic("Unrecoverable error creating Redis Cluster "
-                                "file event.");
+            if (aeCreateFileEvent(server.el, server.cfd[j], AE_READABLE, clusterAcceptHandler, NULL) == AE_ERR)
+                    redisPanic("Unrecoverable error creating Redis Cluster " "file event.");
         }
     }
 
@@ -544,11 +562,21 @@ void clusterReset(int hard) {
  * CLUSTER communication link
  * -------------------------------------------------------------------------- */
 
+/**
+ * 闯将clusterLink对象
+ * @param node 节点实例
+ * @return
+ */
 clusterLink *createClusterLink(clusterNode *node) {
+    // 分配内存
     clusterLink *link = zmalloc(sizeof(*link));
+    // 记录创建时间
     link->ctime = mstime();
+    // 创建发送缓冲区
     link->sndbuf = sdsempty();
+    // 创建接收缓冲区
     link->rcvbuf = sdsempty();
+    // 记录连接所属节点
     link->node = node;
     link->fd = -1;
     return link;
@@ -557,22 +585,42 @@ clusterLink *createClusterLink(clusterNode *node) {
 /* Free a cluster link, but does not free the associated node of course.
  * This function will just make sure that the original node associated
  * with this link will have the 'link' field set to NULL. */
+/**
+ * 关闭本节点与该节点之间的连接
+ * @param link 需要释放的连接
+ */
 void freeClusterLink(clusterLink *link) {
+    // 清除这个fd上的所有时间处理器
     if (link->fd != -1) {
         aeDeleteFileEvent(server.el, link->fd, AE_WRITABLE);
         aeDeleteFileEvent(server.el, link->fd, AE_READABLE);
     }
+    // 释放发送和接收缓冲区
     sdsfree(link->sndbuf);
     sdsfree(link->rcvbuf);
+    // 断开link与节点的联系
     if (link->node)
         link->node->link = NULL;
+    // 关闭套接字
     close(link->fd);
+    //  释放内存
     zfree(link);
 }
 
 #define MAX_CLUSTER_ACCEPTS_PER_CALL 1000
+/**
+ * 集群启动时会创建一个服务监听套接字用于接收其他节点发送的消息
+ * 当其他节点启动时或者其他节点通过cluster meet ip port 将当前节点加入集群时会创建clusterNode对象并加入集群
+ * 随后会在clusterCron中开始连接节点， 这里是接收其他连接节点处理的入口
+ * 注意当其他集群向该集群发送连接时并不会被对方加入集群 而只是建立了连接
+ * @param el
+ * @param fd
+ * @param privdata
+ * @param mask
+ */
 void clusterAcceptHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     int cport, cfd;
+    // 每次事件循环周期允许接收的最大连接数 默认为1000
     int max = MAX_CLUSTER_ACCEPTS_PER_CALL;
     char cip[REDIS_IP_STR_LEN];
     clusterLink *link;
@@ -580,19 +628,28 @@ void clusterAcceptHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     REDIS_NOTUSED(mask);
     REDIS_NOTUSED(privdata);
 
-    /* If the server is starting up, don't accept cluster connections:
+    /*
+     * 如果服务正在启动或者正在加载持久化文件 拒绝集群连接
+     * If the server is starting up, don't accept cluster connections:
      * UPDATE messages may interact with the database content. */
     if (server.masterhost == NULL && server.loading) return;
 
     while(max--) {
+        /*
+         * 通用调用accept接受对应的连接
+         * fd为服务套接字
+         * cfd为客户端套接字
+         */
         cfd = anetTcpAccept(server.neterr, fd, cip, sizeof(cip), &cport);
         if (cfd == ANET_ERR) {
             if (errno != EWOULDBLOCK)
-                redisLog(REDIS_VERBOSE,
-                    "Error accepting cluster node: %s", server.neterr);
+                redisLog(REDIS_VERBOSE, "Error accepting cluster node: %s", server.neterr);
             return;
         }
+
+        // 将客户端套接字标记为非阻塞
         anetNonBlock(NULL,cfd);
+        // 设置TCP_NODELAY
         anetEnableTcpNoDelay(NULL,cfd);
 
         /* Use non-blocking I/O for cluster messages. */
@@ -602,8 +659,11 @@ void clusterAcceptHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
          * Initiallly the link->node pointer is set to NULL as we don't know
          * which node is, but the right node is references once we know the
          * node identity. */
+        // 创建clusterLink对象 这样这两个节点就可以通过link进行双向通信了
         link = createClusterLink(NULL);
         link->fd = cfd;
+
+        // 创建文件事件 节点之间的通信都通过 clusterReadHandler 进行处理
         aeCreateFileEvent(server.el,cfd,AE_READABLE,clusterReadHandler,link);
     }
 }
@@ -650,16 +710,28 @@ unsigned int keyHashSlot(char *key, int keylen) {
  *
  * The node is created and returned to the user, but it is not automatically
  * added to the nodes hash table. */
+/**
+ * 创建节点实例对象
+ * @param nodename 指定创建的节点名称
+ * @param flags 指定创建的节点标志为
+ * @return 返回创建完成的节点实例
+ */
 clusterNode *createClusterNode(char *nodename, int flags) {
+    // 分配内存
     clusterNode *node = zmalloc(sizeof(*node));
 
+    // 如果指定了节点名称则传入 如果未指定则随机生成一个节点名称
     if (nodename)
         memcpy(node->name, nodename, REDIS_CLUSTER_NAMELEN);
     else
         getRandomHexChars(node->name, REDIS_CLUSTER_NAMELEN);
+
+    // 记录创建时间
     node->ctime = mstime();
+    // 配置纪元为0
     node->configEpoch = 0;
     node->flags = flags;
+
     memset(node->slots,0,sizeof(node->slots));
     node->numslots = 0;
     node->numslaves = 0;
@@ -724,8 +796,7 @@ void clusterNodeCleanupFailureReports(clusterNode *node) {
     listNode *ln;
     listIter li;
     clusterNodeFailReport *fr;
-    mstime_t maxtime = server.cluster_node_timeout *
-                     REDIS_CLUSTER_FAIL_REPORT_VALIDITY_MULT;
+    mstime_t maxtime = server.cluster_node_timeout * REDIS_CLUSTER_FAIL_REPORT_VALIDITY_MULT;
     mstime_t now = mstime();
 
     listRewind(l,&li);
@@ -841,11 +912,16 @@ void freeClusterNode(clusterNode *n) {
 }
 
 /* Add a node to the nodes hash table */
+/**
+ * 将节点添加到集群中
+ * @param node 待添加节点实例对象
+ * @return 返回执行结果
+ */
 int clusterAddNode(clusterNode *node) {
     int retval;
 
-    retval = dictAdd(server.cluster->nodes,
-            sdsnewlen(node->name,REDIS_CLUSTER_NAMELEN), node);
+    // 这里就是简单的添加到集群的nodes中 nodes是节点名称和节点的映射字典
+    retval = dictAdd(server.cluster->nodes, sdsnewlen(node->name,REDIS_CLUSTER_NAMELEN), node);
     return (retval == DICT_OK) ? REDIS_OK : REDIS_ERR;
 }
 
@@ -860,12 +936,18 @@ int clusterAddNode(clusterNode *node) {
  *    from the hash table and from the list of slaves of its master, if
  *    it is a slave node.
  */
+/**
+ * 从集群中删除指定节点
+ * @param delnode 待删除的节点对象
+ */
 void clusterDelNode(clusterNode *delnode) {
     int j;
     dictIterator *di;
     dictEntry *de;
 
-    /* 1) Mark slots as unassigned. */
+    /* 1) 将cluster实例中的与待删除节点相关的槽进行清除
+     *
+     * Mark slots as unassigned. */
     for (j = 0; j < REDIS_CLUSTER_SLOTS; j++) {
         if (server.cluster->importing_slots_from[j] == delnode)
             server.cluster->importing_slots_from[j] = NULL;
@@ -875,7 +957,9 @@ void clusterDelNode(clusterNode *delnode) {
             clusterDelSlot(j);
     }
 
-    /* 2) Remove failure reports. */
+    /* 2) 移除失败报告
+     *
+     * Remove failure reports. */
     di = dictGetSafeIterator(server.cluster->nodes);
     while((de = dictNext(di)) != NULL) {
         clusterNode *node = dictGetVal(de);
@@ -885,7 +969,9 @@ void clusterDelNode(clusterNode *delnode) {
     }
     dictReleaseIterator(di);
 
-    /* 3) Free the node, unlinking it from the cluster. */
+    /* 3) 移除检点连接对象
+     *
+     * Free the node, unlinking it from the cluster. */
     freeClusterNode(delnode);
 }
 
@@ -1212,6 +1298,12 @@ void clearNodeFailureIfNeeded(clusterNode *node) {
 /* Return true if we already have a node in HANDSHAKE state matching the
  * specified ip address and port number. This function is used in order to
  * avoid adding a new handshake node for the same address multiple times. */
+/**
+ * 检测指定ip端口的节点是否正在握手
+ * @param ip 检测的ip
+ * @param port 检测的端口
+ * @return 饭后是否正在握手
+ */
 int clusterHandshakeInProgress(char *ip, int port) {
     dictIterator *di;
     dictEntry *de;
@@ -1234,13 +1326,20 @@ int clusterHandshakeInProgress(char *ip, int port) {
  *
  * EAGAIN - There is already an handshake in progress for this address.
  * EINVAL - IP or port are not valid. */
+/**
+ * 对指定ip端口的节点执行握手操作
+ *
+ * @param ip 握手的目标ip
+ * @param port 握手的目标端口
+ * @return 返回执行结果
+ */
 int clusterStartHandshake(char *ip, int port) {
     clusterNode *n;
     char norm_ip[REDIS_IP_STR_LEN];
     struct sockaddr_storage sa;
 
     /*
-     * 检测ipv4还是ipv6
+     * 检测ip地址是否合法，判断视为ipv4还是ipv6
      *
      * IP sanity check */
     if (inet_pton(AF_INET,ip, &(((struct sockaddr_in *)&sa)->sin_addr)))
@@ -1254,7 +1353,9 @@ int clusterStartHandshake(char *ip, int port) {
         return 0;
     }
 
-    /* Port sanity check */
+    /*
+     * 检查目标端口是否合法
+     * Port sanity check */
     if (port <= 0 || port > (65535-REDIS_CLUSTER_PORT_INCR)) {
         errno = EINVAL;
         return 0;
@@ -1271,17 +1372,22 @@ int clusterStartHandshake(char *ip, int port) {
     else
         inet_ntop(AF_INET6, (void*)&(((struct sockaddr_in6 *)&sa)->sin6_addr), norm_ip,REDIS_IP_STR_LEN);
 
+    // 查看当前节点是否正在握手 如果正在握手则返回
     if (clusterHandshakeInProgress(norm_ip,port)) {
         errno = EAGAIN;
         return 0;
     }
 
-    /* Add the node with a random address (NULL as first argument to
+    /*
+     * 初始化一个节点实例
+     * Add the node with a random address (NULL as first argument to
      * createClusterNode()). Everything will be fixed during the
      * handshake. */
     n = createClusterNode(NULL,REDIS_NODE_HANDSHAKE|REDIS_NODE_MEET);
+    // 保存上传的ip和端口
     memcpy(n->ip,norm_ip,sizeof(n->ip));
     n->port = port;
+    // 将节点添加到集群中
     clusterAddNode(n);
     return 1;
 }
@@ -1293,6 +1399,7 @@ int clusterStartHandshake(char *ip, int port) {
 void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
     uint16_t count = ntohs(hdr->count);
     clusterMsgDataGossip *g = (clusterMsgDataGossip*) hdr->data.ping.gossip;
+    // 如果是其他节点通过meet添加节点后 发送连接请求此时节点信息只会在link上
     clusterNode *sender = link->node ? link->node : clusterLookupNode(hdr->sender);
 
     while(count--) {
@@ -1300,7 +1407,9 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
         clusterNode *node;
         sds ci;
 
+        // 将flag转换成打印字符串
         ci = representRedisNodeFlags(sdsempty(), flags);
+        // 打gossip中的节点信息
         redisLog(REDIS_DEBUG,"GOSSIP %.40s %s:%d %s",
             g->nodename,
             g->ip,
@@ -1308,11 +1417,14 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
             ci);
         sdsfree(ci);
 
-        /* Update our state accordingly to the gossip sections */
+        /*
+         * 根据gossip中的节点名称查找是否在集群中
+         * Update our state accordingly to the gossip sections */
         node = clusterLookupNode(g->nodename);
+
+        // case1:节点存在
         if (node) {
-            /* We already know this node.
-               Handle failure reports, only when the sender is a master. */
+            /* We already know this node. Handle failure reports, only when the sender is a master. */
             if (sender && nodeIsMaster(sender) && node != myself) {
                 if (flags & (REDIS_NODE_FAIL|REDIS_NODE_PFAIL)) {
                     if (clusterNodeAddFailureReport(node,sender)) {
@@ -1330,7 +1442,9 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
                 }
             }
 
-            /* If we already know this node, but it is not reachable, and
+            /*
+             * 如果我们对一个节点是不可达的 但是其他节点可以访问且其他节点访问的地址不同 则我们需要换成新的连接地阿志
+             * If we already know this node, but it is not reachable, and
              * we see a different address in the gossip section of a node that
              * can talk with this other node, update the address, disconnect
              * the old link if any, so that we'll attempt to connect with the
@@ -1340,21 +1454,27 @@ void clusterProcessGossipSection(clusterMsg *hdr, clusterLink *link) {
                 !(flags & (REDIS_NODE_FAIL|REDIS_NODE_PFAIL)) &&
                 (strcasecmp(node->ip,g->ip) || node->port != ntohs(g->port)))
             {
+                // 释放连接 并更换ip和端口
                 if (node->link) freeClusterLink(node->link);
                 memcpy(node->ip,g->ip,REDIS_IP_STR_LEN);
                 node->port = ntohs(g->port);
                 node->flags &= ~REDIS_NODE_NOADDR;
             }
-        } else {
-            /* If it's not in NOADDR state and we don't have it, we
+        }
+        // case2:节点不存在
+        else {
+            /*
+             * 如果节点的flags存在地址且不再黑名单中则开始握手
+             * 这种情况针对其他节点上使用meet myself port 添加节点
+             * 其他节点的Cron中会首次创建连接 该节点收到连接之后只会创建link 并在这里进行握手
+             * 到这里 双方集群中对方节点的状态都变为握手中
+             * If it's not in NOADDR state and we don't have it, we
              * start a handshake process against this IP/PORT pairs.
              *
              * Note that we require that the sender of this gossip message
              * is a well known node in our cluster, otherwise we risk
              * joining another cluster. */
-            if (sender &&
-                !(flags & REDIS_NODE_NOADDR) &&
-                !clusterBlacklistExists(g->nodename))
+            if (sender && !(flags & REDIS_NODE_NOADDR) && !clusterBlacklistExists(g->nodename))
             {
                 clusterStartHandshake(g->ip,ntohs(g->port));
             }
@@ -1540,6 +1660,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
  * received from the wrong sender ID). */
 int clusterProcessPacket(clusterLink *link) {
     clusterMsg *hdr = (clusterMsg*) link->rcvbuf;
+    // 解析消息总长度和type转换成主机字节序
     uint32_t totlen = ntohl(hdr->totlen);
     uint16_t type = ntohs(hdr->type);
 
@@ -1560,8 +1681,10 @@ int clusterProcessPacket(clusterLink *link) {
     uint64_t senderCurrentEpoch = 0, senderConfigEpoch = 0;
     clusterNode *sender;
 
-    if (type == CLUSTERMSG_TYPE_PING || type == CLUSTERMSG_TYPE_PONG ||
-        type == CLUSTERMSG_TYPE_MEET)
+    /*
+     * step1.验证消息长度是否合法
+     */
+    if (type == CLUSTERMSG_TYPE_PING || type == CLUSTERMSG_TYPE_PONG || type == CLUSTERMSG_TYPE_MEET)
     {
         uint16_t count = ntohs(hdr->count);
         uint32_t explen; /* expected length of this packet */
@@ -1569,12 +1692,14 @@ int clusterProcessPacket(clusterLink *link) {
         explen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
         explen += (sizeof(clusterMsgDataGossip)*count);
         if (totlen != explen) return 1;
-    } else if (type == CLUSTERMSG_TYPE_FAIL) {
+    }
+    else if (type == CLUSTERMSG_TYPE_FAIL) {
         uint32_t explen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
 
         explen += sizeof(clusterMsgDataFail);
         if (totlen != explen) return 1;
-    } else if (type == CLUSTERMSG_TYPE_PUBLISH) {
+    }
+    else if (type == CLUSTERMSG_TYPE_PUBLISH) {
         uint32_t explen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
 
         explen += sizeof(clusterMsgDataPublish) -
@@ -1582,35 +1707,41 @@ int clusterProcessPacket(clusterLink *link) {
                 ntohl(hdr->data.publish.msg.channel_len) +
                 ntohl(hdr->data.publish.msg.message_len);
         if (totlen != explen) return 1;
-    } else if (type == CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST ||
-               type == CLUSTERMSG_TYPE_FAILOVER_AUTH_ACK ||
-               type == CLUSTERMSG_TYPE_MFSTART)
+    }
+    else if (type == CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST || type == CLUSTERMSG_TYPE_FAILOVER_AUTH_ACK || type == CLUSTERMSG_TYPE_MFSTART)
     {
         uint32_t explen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
 
         if (totlen != explen) return 1;
-    } else if (type == CLUSTERMSG_TYPE_UPDATE) {
+    }
+    else if (type == CLUSTERMSG_TYPE_UPDATE) {
         uint32_t explen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
 
         explen += sizeof(clusterMsgDataUpdate);
         if (totlen != explen) return 1;
     }
 
-    /* Check if the sender is a known node. */
+    /*
+     * step2.根据消息中的发送者找到对应的节点实例并修改节点信息
+     * Check if the sender is a known node. */
     sender = clusterLookupNode(hdr->sender);
     if (sender && !nodeInHandshake(sender)) {
         /* Update our curretEpoch if we see a newer epoch in the cluster. */
         senderCurrentEpoch = ntohu64(hdr->currentEpoch);
         senderConfigEpoch = ntohu64(hdr->configEpoch);
+        // 1、更新集群整体纪元
         if (senderCurrentEpoch > server.cluster->currentEpoch)
             server.cluster->currentEpoch = senderCurrentEpoch;
-        /* Update the sender configEpoch if it is publishing a newer one. */
+        /*
+         * 2、更新发送者节点的配置纪元 提示在事件循环执行之前需要先执行集群配置保存工作
+         * Update the sender configEpoch if it is publishing a newer one. */
         if (senderConfigEpoch > sender->configEpoch) {
             sender->configEpoch = senderConfigEpoch;
-            clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
-                                 CLUSTER_TODO_FSYNC_CONFIG);
+            clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|CLUSTER_TODO_FSYNC_CONFIG);
         }
-        /* Update the replication offset info for this node. */
+        /*
+         * 更新发送者节点的复制偏移量并记录更新时间
+         * Update the replication offset info for this node. */
         sender->repl_offset = ntohu64(hdr->offset);
         sender->repl_offset_time = mstime();
         /* If we are a slave performing a manual failover and our master
@@ -1622,10 +1753,7 @@ int clusterProcessPacket(clusterLink *link) {
             server.cluster->mf_master_offset == 0)
         {
             server.cluster->mf_master_offset = sender->repl_offset;
-            redisLog(REDIS_WARNING,
-                "Received replication offset for paused "
-                "master manual failover: %lld",
-                server.cluster->mf_master_offset);
+            redisLog(REDIS_WARNING, "Received replication offset for paused master manual failover: %lld", server.cluster->mf_master_offset);
         }
     }
 
@@ -1644,62 +1772,71 @@ int clusterProcessPacket(clusterLink *link) {
          * However if we don't have an address at all, we update the address
          * even with a normal PING packet. If it's wrong it will be fixed
          * by MEET later. */
+
+        /*
+         * 这里是为了不让连接地址进行硬编码 所以通过套接字来获取我自身的ip地址并进行校验 如果改变了地址 就会进行更新
+         */
         if (type == CLUSTERMSG_TYPE_MEET || myself->ip[0] == '\0') {
             char ip[REDIS_IP_STR_LEN];
 
-            if (anetSockName(link->fd,ip,sizeof(ip),NULL) != -1 &&
-                strcmp(ip,myself->ip))
+            if (anetSockName(link->fd,ip,sizeof(ip),NULL) != -1 && strcmp(ip,myself->ip))
             {
                 memcpy(myself->ip,ip,REDIS_IP_STR_LEN);
-                redisLog(REDIS_WARNING,"IP address for this node updated to %s",
-                    myself->ip);
+                redisLog(REDIS_WARNING,"IP address for this node updated to %s", myself->ip);
+                // 集群状态改变需要同步配置
                 clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
             }
         }
 
-        /* Add this node if it is new for us and the msg type is MEET.
+        /*
+         * 若找不到节点 并且类型是MEET说明 首次将该节点添加到发送者集群中 处理cluster meet的情况
+         * Add this node if it is new for us and the msg type is MEET.
          * In this stage we don't try to add the node with the right
          * flags, slaveof pointer, and so forth, as this details will be
          * resolved when we'll receive PONGs from the node. */
         if (!sender && type == CLUSTERMSG_TYPE_MEET) {
             clusterNode *node;
 
+            // 创建集群对象
             node = createClusterNode(NULL,REDIS_NODE_HANDSHAKE);
             nodeIp2String(node->ip,link);
             node->port = ntohs(hdr->port);
+            // 将节点加入集群
             clusterAddNode(node);
+            // 集群状态改变需要同步配置
             clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
         }
 
-        /* If this is a MEET packet from an unknown node, we still process
+        /*
+         * 即使是一个未知节点发送过来的消息我们也不许信任并处理 gossip部分
+         * If this is a MEET packet from an unknown node, we still process
          * the gossip section here since we have to trust the sender because
          * of the message type. */
         if (!sender && type == CLUSTERMSG_TYPE_MEET)
             clusterProcessGossipSection(hdr,link);
 
-        /* Anyway reply with a PONG */
+        /*
+         * 针对ping包进行回复 回复pong包 pong包也会带着gossip信息
+         * Anyway reply with a PONG */
         clusterSendPing(link,CLUSTERMSG_TYPE_PONG);
     }
 
     /* PING, PONG, MEET: process config information. */
-    if (type == CLUSTERMSG_TYPE_PING || type == CLUSTERMSG_TYPE_PONG ||
-        type == CLUSTERMSG_TYPE_MEET)
-    {
-        redisLog(REDIS_DEBUG,"%s packet received: %p",
-            type == CLUSTERMSG_TYPE_PING ? "ping" : "pong",
-            (void*)link->node);
+    if (type == CLUSTERMSG_TYPE_PING || type == CLUSTERMSG_TYPE_PONG || type == CLUSTERMSG_TYPE_MEET) {
+        redisLog(REDIS_DEBUG,"%s packet received: %p", type == CLUSTERMSG_TYPE_PING ? "ping" : "pong", (void*)link->node);
         if (link->node) {
+            // case1:如果当前节点正在握手中
+            // 进入握手的两个条件 1.主动使用cluster meet添加 2.节点将cluster meet添加的节点传播到
             if (nodeInHandshake(link->node)) {
-                /* If we already have this node, try to change the
+                /*
+                 * 正常流程 当客户端发起meet的时候创建的节点是随机名称 向meet节点发送ping之后 meet节点会带上自己的真实名称 所以这里处理pong信息时是查不到sender的
+                 * If we already have this node, try to change the
                  * IP/port of the node with the new one. */
                 if (sender) {
-                    redisLog(REDIS_VERBOSE,
-                        "Handshake: we already know node %.40s, "
-                        "updating the address if needed.", sender->name);
-                    if (nodeUpdateAddressIfNeeded(sender,link,ntohs(hdr->port)))
-                    {
-                        clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
-                                             CLUSTER_TODO_UPDATE_STATE);
+                    // 检查link和sender中的ip地址是否一致 如果不一致则修改
+                    redisLog(REDIS_VERBOSE, "Handshake: we already know node %.40s, updating the address if needed.", sender->name);
+                    if (nodeUpdateAddressIfNeeded(sender,link,ntohs(hdr->port))) {
+                        clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|CLUSTER_TODO_UPDATE_STATE);
                     }
                     /* Free this node as we already have it. This will
                      * cause the link to be freed as well. */
@@ -1707,17 +1844,21 @@ int clusterProcessPacket(clusterLink *link) {
                     return 0;
                 }
 
-                /* First thing to do is replacing the random name with the
+                /*
+                 * 修改成Meet节点真实的节点名称
+                 * First thing to do is replacing the random name with the
                  * right node name if this was a handshake stage. */
                 clusterRenameNode(link->node, hdr->sender);
                 redisLog(REDIS_DEBUG,"Handshake with node %.40s completed.",
                     link->node->name);
+                // 标记这个节点取消握手阶段
                 link->node->flags &= ~REDIS_NODE_HANDSHAKE;
+                // 只保留主节点标记或者从节点标记
                 link->node->flags |= flags&(REDIS_NODE_MASTER|REDIS_NODE_SLAVE);
                 clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
-            } else if (memcmp(link->node->name,hdr->sender,
-                        REDIS_CLUSTER_NAMELEN) != 0)
-            {
+            }
+            // link中的node id 和hdr中的id不一致
+            else if (memcmp(link->node->name,hdr->sender, REDIS_CLUSTER_NAMELEN) != 0) {
                 /* If the reply has a non matching node ID we
                  * disconnect this node and set it as not having an associated
                  * address. */
@@ -1735,12 +1876,9 @@ int clusterProcessPacket(clusterLink *link) {
         }
 
         /* Update the node address if it changed. */
-        if (sender && type == CLUSTERMSG_TYPE_PING &&
-            !nodeInHandshake(sender) &&
-            nodeUpdateAddressIfNeeded(sender,link,ntohs(hdr->port)))
+        if (sender && type == CLUSTERMSG_TYPE_PING && !nodeInHandshake(sender) && nodeUpdateAddressIfNeeded(sender,link,ntohs(hdr->port)))
         {
-            clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
-                                 CLUSTER_TODO_UPDATE_STATE);
+            clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|CLUSTER_TODO_UPDATE_STATE);
         }
 
         /* Update our info about the node */
@@ -1756,8 +1894,7 @@ int clusterProcessPacket(clusterLink *link) {
              * conditions detected by clearNodeFailureIfNeeded(). */
             if (nodeTimedOut(link->node)) {
                 link->node->flags &= ~REDIS_NODE_PFAIL;
-                clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
-                                     CLUSTER_TODO_UPDATE_STATE);
+                clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|CLUSTER_TODO_UPDATE_STATE);
             } else if (nodeFailed(link->node)) {
                 clearNodeFailureIfNeeded(link->node);
             }
@@ -1765,9 +1902,7 @@ int clusterProcessPacket(clusterLink *link) {
 
         /* Check for role switch: slave -> master or master -> slave. */
         if (sender) {
-            if (!memcmp(hdr->slaveof,REDIS_NODE_NULL_NAME,
-                sizeof(hdr->slaveof)))
-            {
+            if (!memcmp(hdr->slaveof,REDIS_NODE_NULL_NAME, sizeof(hdr->slaveof))) {
                 /* Node is a master. */
                 clusterSetNodeAsMaster(sender);
             } else {
@@ -1777,13 +1912,11 @@ int clusterProcessPacket(clusterLink *link) {
                 if (nodeIsMaster(sender)) {
                     /* Master turned into a slave! Reconfigure the node. */
                     clusterDelNodeSlots(sender);
-                    sender->flags &= ~(REDIS_NODE_MASTER|
-                                       REDIS_NODE_MIGRATE_TO);
+                    sender->flags &= ~(REDIS_NODE_MASTER|REDIS_NODE_MIGRATE_TO);
                     sender->flags |= REDIS_NODE_SLAVE;
 
                     /* Update config and state. */
-                    clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
-                                         CLUSTER_TODO_UPDATE_STATE);
+                    clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|CLUSTER_TODO_UPDATE_STATE);
                 }
 
                 /* Master node changed for this slave? */
@@ -1814,8 +1947,7 @@ int clusterProcessPacket(clusterLink *link) {
         if (sender) {
             sender_master = nodeIsMaster(sender) ? sender : sender->slaveof;
             if (sender_master) {
-                dirty_slots = memcmp(sender_master->slots,
-                        hdr->myslots,sizeof(hdr->myslots)) != 0;
+                dirty_slots = memcmp(sender_master->slots, hdr->myslots,sizeof(hdr->myslots)) != 0;
             }
         }
 
@@ -1857,8 +1989,7 @@ int clusterProcessPacket(clusterLink *link) {
                             "Node %.40s has old slots configuration, sending "
                             "an UPDATE message about %.40s",
                                 sender->name, server.cluster->slots[j]->name);
-                        clusterSendUpdate(sender->link,
-                            server.cluster->slots[j]);
+                        clusterSendUpdate(sender->link, server.cluster->slots[j]);
 
                         /* TODO: instead of exiting the loop send every other
                          * UPDATE packet for other nodes that are the new owner
@@ -1871,16 +2002,15 @@ int clusterProcessPacket(clusterLink *link) {
 
         /* If our config epoch collides with the sender's try to fix
          * the problem. */
-        if (sender &&
-            nodeIsMaster(myself) && nodeIsMaster(sender) &&
-            senderConfigEpoch == myself->configEpoch)
+        if (sender && nodeIsMaster(myself) && nodeIsMaster(sender) && senderConfigEpoch == myself->configEpoch)
         {
             clusterHandleConfigEpochCollision(sender);
         }
 
         /* Get info from the gossip section */
         if (sender) clusterProcessGossipSection(hdr,link);
-    } else if (type == CLUSTERMSG_TYPE_FAIL) {
+    }
+    else if (type == CLUSTERMSG_TYPE_FAIL) {
         clusterNode *failing;
 
         if (sender) {
@@ -1902,7 +2032,8 @@ int clusterProcessPacket(clusterLink *link) {
                 "Ignoring FAIL message from unknown node %.40s about %.40s",
                 hdr->sender, hdr->data.fail.about.nodename);
         }
-    } else if (type == CLUSTERMSG_TYPE_PUBLISH) {
+    }
+    else if (type == CLUSTERMSG_TYPE_PUBLISH) {
         robj *channel, *message;
         uint32_t channel_len, message_len;
 
@@ -1922,10 +2053,12 @@ int clusterProcessPacket(clusterLink *link) {
             decrRefCount(channel);
             decrRefCount(message);
         }
-    } else if (type == CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST) {
+    }
+    else if (type == CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST) {
         if (!sender) return 1;  /* We don't know that node. */
         clusterSendFailoverAuthIfNeeded(sender,hdr);
-    } else if (type == CLUSTERMSG_TYPE_FAILOVER_AUTH_ACK) {
+    }
+    else if (type == CLUSTERMSG_TYPE_FAILOVER_AUTH_ACK) {
         if (!sender) return 1;  /* We don't know that node. */
         /* We consider this vote only if the sender is a master serving
          * a non zero number of slots, and its currentEpoch is greater or
@@ -1938,7 +2071,8 @@ int clusterProcessPacket(clusterLink *link) {
              * we check ASAP. */
             clusterDoBeforeSleep(CLUSTER_TODO_HANDLE_FAILOVER);
         }
-    } else if (type == CLUSTERMSG_TYPE_MFSTART) {
+    }
+    else if (type == CLUSTERMSG_TYPE_MFSTART) {
         /* This message is acceptable only if I'm a master and the sender
          * is one of my slaves. */
         if (!sender || sender->slaveof != myself) return 1;
@@ -1948,9 +2082,9 @@ int clusterProcessPacket(clusterLink *link) {
         server.cluster->mf_end = mstime() + REDIS_CLUSTER_MF_TIMEOUT;
         server.cluster->mf_slave = sender;
         pauseClients(mstime()+(REDIS_CLUSTER_MF_TIMEOUT*2));
-        redisLog(REDIS_WARNING,"Manual failover requested by slave %.40s.",
-            sender->name);
-    } else if (type == CLUSTERMSG_TYPE_UPDATE) {
+        redisLog(REDIS_WARNING,"Manual failover requested by slave %.40s.", sender->name);
+    }
+    else if (type == CLUSTERMSG_TYPE_UPDATE) {
         clusterNode *n; /* The node the update is about. */
         uint64_t reportedConfigEpoch =
                     ntohu64(hdr->data.update.nodecfg.configEpoch);
@@ -1972,7 +2106,8 @@ int clusterProcessPacket(clusterLink *link) {
          * config accordingly. */
         clusterUpdateSlotsConfigWith(n,reportedConfigEpoch,
             hdr->data.update.nodecfg.slots);
-    } else {
+    }
+    else {
         redisLog(REDIS_WARNING,"Received unknown packet type: %d", type);
     }
     return 1;
@@ -1991,20 +2126,28 @@ void handleLinkIOError(clusterLink *link) {
 /* Send data. This is handled using a trivial send buffer that gets
  * consumed by write(). We don't try to optimize this for speed too much
  * as this is a very low traffic channel. */
+/**
+ * 时间循环中用于发送集群消息的处理器
+ * @param el 绑定的事件循环主题
+ * @param fd 绑定的套接字
+ * @param privdata 集群的link对象
+ * @param mask AE_WRITABLE
+ */
 void clusterWriteHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     clusterLink *link = (clusterLink*) privdata;
     ssize_t nwritten;
     REDIS_NOTUSED(el);
     REDIS_NOTUSED(mask);
 
+    // 将link中的sendbuf写入socket中
     nwritten = write(fd, link->sndbuf, sdslen(link->sndbuf));
     if (nwritten <= 0) {
-        redisLog(REDIS_DEBUG,"I/O error writing to node link: %s",
-            strerror(errno));
+        redisLog(REDIS_DEBUG,"I/O error writing to node link: %s", strerror(errno));
         handleLinkIOError(link);
         return;
     }
     sdsrange(link->sndbuf,nwritten,-1);
+    // 发送完成之后需要删除AE_WRITABLE事件
     if (sdslen(link->sndbuf) == 0)
         aeDeleteFileEvent(server.el, link->fd, AE_WRITABLE);
 }
@@ -2081,10 +2224,9 @@ void clusterReadHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
  * the link to be invalidated, so it is safe to call this function
  * from event handlers that will do stuff with the same link later. */
 void clusterSendMessage(clusterLink *link, unsigned char *msg, size_t msglen) {
+    // 通过时间循环发送数据
     if (sdslen(link->sndbuf) == 0 && msglen != 0)
-        aeCreateFileEvent(server.el,link->fd,AE_WRITABLE,
-                    clusterWriteHandler,link);
-
+        aeCreateFileEvent(server.el,link->fd,AE_WRITABLE, clusterWriteHandler,link);
     link->sndbuf = sdscatlen(link->sndbuf, msg, msglen);
     server.cluster->stats_bus_messages_sent++;
 }
@@ -2113,6 +2255,11 @@ void clusterBroadcastMessage(void *buf, size_t len) {
 
 /* Build the message header. hdr must point to a buffer at least
  * sizeof(clusterMsg) in bytes. */
+/**
+ * 构建集群消息头
+ * @param hdr 空的消息实体
+ * @param type 消息类型
+ */
 void clusterBuildMessageHdr(clusterMsg *hdr, int type) {
     int totlen = 0;
     uint64_t offset;
@@ -2122,42 +2269,58 @@ void clusterBuildMessageHdr(clusterMsg *hdr, int type) {
      * If this node is a slave we send the master's information instead (the
      * node is flagged as slave so the receiver knows that it is NOT really
      * in charge for this slots. */
-    master = (nodeIsSlave(myself) && myself->slaveof) ?
-              myself->slaveof : myself;
+    master = (nodeIsSlave(myself) && myself->slaveof) ? myself->slaveof : myself;
 
     memset(hdr,0,sizeof(*hdr));
+    // 设置协议版本 （都转换成网络字节序）
     hdr->ver = htons(CLUSTER_PROTO_VER);
+    // 设置固定文本
     hdr->sig[0] = 'R';
     hdr->sig[1] = 'C';
     hdr->sig[2] = 'm';
     hdr->sig[3] = 'b';
+    // 设置消息类型 （转换成网络字节序）
     hdr->type = htons(type);
+    // 设置发送者名称
     memcpy(hdr->sender,myself->name,REDIS_CLUSTER_NAMELEN);
-
+    // 设置自己负责的槽位
     memcpy(hdr->myslots,master->slots,sizeof(hdr->myslots));
+    // 设置自己所从属的主节点名称
     memset(hdr->slaveof,0,REDIS_CLUSTER_NAMELEN);
     if (myself->slaveof != NULL)
         memcpy(hdr->slaveof,myself->slaveof->name, REDIS_CLUSTER_NAMELEN);
+    // 设置自己的服务端口（业务端口）
     hdr->port = htons(server.port);
+    // 设置自己的节点标记
     hdr->flags = htons(myself->flags);
+    // 设置自己的集群状态
     hdr->state = server.cluster->state;
 
-    /* Set the currentEpoch and configEpochs. */
+    /*
+     * 设置本节点视角下的集群纪元
+     * Set the currentEpoch and configEpochs. */
     hdr->currentEpoch = htonu64(server.cluster->currentEpoch);
+    // 设置本节点视角下的配置纪元
     hdr->configEpoch = htonu64(master->configEpoch);
 
-    /* Set the replication offset. */
+    /*
+     * 设置自己的复制偏移量 并转换成网络字节序
+     * Set the replication offset. */
     if (nodeIsSlave(myself))
         offset = replicationGetSlaveOffset();
     else
         offset = server.master_repl_offset;
     hdr->offset = htonu64(offset);
 
-    /* Set the message flags. */
+    /*
+     * 如果故障转移结束 取消标志
+     * Set the message flags. */
     if (nodeIsMaster(myself) && server.cluster->mf_end)
         hdr->mflags[0] |= CLUSTERMSG_FLAG0_PAUSED;
 
-    /* Compute the message length for certain messages. For other messages
+    /*
+     * 根据消息的类型设置不同的消息内容
+     * Compute the message length for certain messages. For other messages
      * this is up to the caller. */
     if (type == CLUSTERMSG_TYPE_FAIL) {
         totlen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
@@ -2167,7 +2330,9 @@ void clusterBuildMessageHdr(clusterMsg *hdr, int type) {
         totlen += sizeof(clusterMsgDataUpdate);
     }
     hdr->totlen = htonl(totlen);
-    /* For PING, PONG, and MEET, fixing the totlen field is up to the caller. */
+    /*
+     * 对于 PING PONG MEET由于消息体是可变的 所以长度后续由调用者进行计算
+     * For PING, PONG, and MEET, fixing the totlen field is up to the caller. */
 }
 
 /* Send a PING or PONG packet to the specified node, making sure to add enough
@@ -2243,8 +2408,7 @@ void clusterSendPing(clusterLink *link, int type) {
         if (this == myself) continue;
 
         /* Give a bias to FAIL/PFAIL nodes. */
-        if (maxiterations > wanted*2 &&
-            !(this->flags & (REDIS_NODE_PFAIL|REDIS_NODE_FAIL)))
+        if (maxiterations > wanted*2 && !(this->flags & (REDIS_NODE_PFAIL|REDIS_NODE_FAIL)))
             continue;
 
         /* In the gossip section don't include:
@@ -2252,8 +2416,7 @@ void clusterSendPing(clusterLink *link, int type) {
          * 3) Nodes with the NOADDR flag set.
          * 4) Disconnected nodes if they don't have configured slots.
          */
-        if (this->flags & (REDIS_NODE_HANDSHAKE|REDIS_NODE_NOADDR) ||
-            (this->link == NULL && this->numslots == 0))
+        if (this->flags & (REDIS_NODE_HANDSHAKE|REDIS_NODE_NOADDR) || (this->link == NULL && this->numslots == 0))
         {
             freshnodes--; /* Tecnically not correct, but saves CPU. */
             continue;
@@ -2261,26 +2424,37 @@ void clusterSendPing(clusterLink *link, int type) {
 
         /* Check if we already added this node */
         for (j = 0; j < gossipcount; j++) {
-            if (memcmp(hdr->data.ping.gossip[j].nodename,this->name,
-                    REDIS_CLUSTER_NAMELEN) == 0) break;
+            if (memcmp(hdr->data.ping.gossip[j].nodename,this->name, REDIS_CLUSTER_NAMELEN) == 0)
+                break;
         }
         if (j != gossipcount) continue;
 
         /* Add it */
         freshnodes--;
+        // 从gossip取出一个槽
         gossip = &(hdr->data.ping.gossip[gossipcount]);
+
+        // 设置集群中的节点名称
         memcpy(gossip->nodename,this->name,REDIS_CLUSTER_NAMELEN);
+        // 设置上一次发送ping消息的时间
         gossip->ping_sent = htonl(this->ping_sent);
+        // 设置上一次收到pong消息的时间
         gossip->pong_received = htonl(this->pong_received);
+        // 设置这个节点的IP地址
         memcpy(gossip->ip,this->ip,sizeof(this->ip));
+        // 设置这个节点的额端口
         gossip->port = htons(this->port);
+        // 设置这个节点的标记
         gossip->flags = htons(this->flags);
+
         gossip->notused1 = 0;
         gossip->notused2 = 0;
         gossipcount++;
     }
 
-    /* Ready to send... fix the totlen fiend and queue the message in the
+    /*
+     * 重新计算总的数据长度
+     * Ready to send... fix the totlen fiend and queue the message in the
      * output buffer. */
     totlen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
     totlen += (sizeof(clusterMsgDataGossip)*gossipcount);
@@ -3073,34 +3247,43 @@ void clusterCron(void) {
 
     iteration++; /* Number of times this function was called so far. */
 
-    /* The handshake timeout is the time after which a handshake node that was
+    /*
+     * 指定握手超时时间 最小为1秒
+     * The handshake timeout is the time after which a handshake node that was
      * not turned into a normal node is removed from the nodes. Usually it is
      * just the NODE_TIMEOUT value, but when NODE_TIMEOUT is too small we use
      * the value of 1 second. */
     handshake_timeout = server.cluster_node_timeout;
     if (handshake_timeout < 1000) handshake_timeout = 1000;
 
-    /* Check if we have disconnected nodes and re-establish the connection. */
+    /*
+     * 开始遍历节点 确保与其他节点的连接通道是建立的 如果没有建立连接通道则则尝试建立 并且发送ping消息
+     * Check if we have disconnected nodes and re-establish the connection. */
     di = dictGetSafeIterator(server.cluster->nodes);
     while((de = dictNext(di)) != NULL) {
         clusterNode *node = dictGetVal(de);
 
+
+        // 如果当前节点为自身或者没有明确的连接地址则跳过
         if (node->flags & (REDIS_NODE_MYSELF|REDIS_NODE_NOADDR)) continue;
 
-        /* A Node in HANDSHAKE state has a limited lifespan equal to the
+        /*
+         * 如果一个节点处于正在握手的状态但是握手时间超过了超时时间则将该节点踢出集群 握手失败
+         * A Node in HANDSHAKE state has a limited lifespan equal to the
          * configured node timeout. */
         if (nodeInHandshake(node) && now - node->ctime > handshake_timeout) {
             clusterDelNode(node);
             continue;
         }
 
+        // 如果当前节点与目标节点并未建立连接
         if (node->link == NULL) {
             int fd;
             mstime_t old_ping_sent;
             clusterLink *link;
 
-            fd = anetTcpNonBlockBindConnect(server.neterr, node->ip,
-                node->port+REDIS_CLUSTER_PORT_INCR, REDIS_BIND_ADDR);
+            // 建立非阻塞连接socket
+            fd = anetTcpNonBlockBindConnect(server.neterr, node->ip, node->port+REDIS_CLUSTER_PORT_INCR, REDIS_BIND_ADDR);
             if (fd == -1) {
                 /* We got a synchronous error from connect before
                  * clusterSendPing() had a chance to be called.
@@ -3114,20 +3297,29 @@ void clusterCron(void) {
                     server.neterr);
                 continue;
             }
+
+            // 创建连接对象
             link = createClusterLink(node);
+            // 保存套接字描述符
             link->fd = fd;
+            // 将link保存到节点实例中
             node->link = link;
-            aeCreateFileEvent(server.el,link->fd,AE_READABLE,
-                    clusterReadHandler,link);
-            /* Queue a PING in the new connection ASAP: this is crucial
+            // 创建针对这个套接字的可读事件
+            aeCreateFileEvent(server.el,link->fd,AE_READABLE, clusterReadHandler,link);
+            /*
+             * 向对应节点发送 消息 如果该节点被标记为REDIS_NODE_MEET 这个标记只有在首次创建节点对象的时候会标记
+             * 1.节点首次启动
+             * 2.客户端调用meet创建节点
+             * Queue a PING in the new connection ASAP: this is crucial
              * to avoid false positives in failure detection.
              *
+             *
+             * 这里为什么要保存之前的发送时间 是下面会在超时时间到来之前重新连接一次
              * If the node is flagged as MEET, we send a MEET message instead
              * of a PING one, to force the receiver to add us in its node
              * table. */
             old_ping_sent = node->ping_sent;
-            clusterSendPing(link, node->flags & REDIS_NODE_MEET ?
-                    CLUSTERMSG_TYPE_MEET : CLUSTERMSG_TYPE_PING);
+            clusterSendPing(link, node->flags & REDIS_NODE_MEET ? CLUSTERMSG_TYPE_MEET : CLUSTERMSG_TYPE_PING);
             if (old_ping_sent) {
                 /* If there was an active ping before the link was
                  * disconnected, we want to restore the ping time, otherwise
@@ -3141,13 +3333,14 @@ void clusterCron(void) {
              * normal PING packets. */
             node->flags &= ~REDIS_NODE_MEET;
 
-            redisLog(REDIS_DEBUG,"Connecting with Node %.40s at %s:%d",
-                    node->name, node->ip, node->port+REDIS_CLUSTER_PORT_INCR);
+            redisLog(REDIS_DEBUG,"Connecting with Node %.40s at %s:%d", node->name, node->ip, node->port+REDIS_CLUSTER_PORT_INCR);
         }
     }
     dictReleaseIterator(di);
 
-    /* Ping some random node 1 time every 10 iterations, so that we usually ping
+    /*
+     * 每十次迭代需要对5个随机节点发送ping消息
+     * Ping some random node 1 time every 10 iterations, so that we usually ping
      * one random node every second. */
     if (!(iteration % 10)) {
         int j;
@@ -3155,13 +3348,20 @@ void clusterCron(void) {
         /* Check a few random nodes and ping the one with the oldest
          * pong_received time. */
         for (j = 0; j < 5; j++) {
+            // 获取一个随机节点
             de = dictGetRandomKey(server.cluster->nodes);
             clusterNode *this = dictGetVal(de);
 
-            /* Don't ping nodes disconnected or with a ping currently active. */
+            /*
+             * 如果选取的节点没有连接通道 或者 上一次ping还没有结束则跳过
+             * Don't ping nodes disconnected or with a ping currently active. */
             if (this->link == NULL || this->ping_sent != 0) continue;
+            /*
+             * 如果选取的节点是自己或者正在握手的节点 也跳过
+             */
             if (this->flags & (REDIS_NODE_MYSELF|REDIS_NODE_HANDSHAKE))
                 continue;
+
             if (min_pong_node == NULL || min_pong > this->pong_received) {
                 min_pong_node = this;
                 min_pong = this->pong_received;
@@ -3169,14 +3369,14 @@ void clusterCron(void) {
         }
         if (min_pong_node) {
             redisLog(REDIS_DEBUG,"Pinging node %.40s", min_pong_node->name);
+            // 发送ping消息
             clusterSendPing(min_pong_node->link, CLUSTERMSG_TYPE_PING);
         }
     }
 
     /* Iterate nodes to check if we need to flag something as failing.
      * This loop is also responsible to:
-     * 1) Check if there are orphaned masters (masters without non failing
-     *    slaves).
+     * 1) Check if there are orphaned masters (masters without non failing slaves).
      * 2) Count the max number of non failing slaves for a single master.
      * 3) Count the number of slaves for our master, if we are a slave. */
     orphaned_masters = 0;
@@ -3188,9 +3388,9 @@ void clusterCron(void) {
         now = mstime(); /* Use an updated time at every iteration. */
         mstime_t delay;
 
-        if (node->flags &
-            (REDIS_NODE_MYSELF|REDIS_NODE_NOADDR|REDIS_NODE_HANDSHAKE))
-                continue;
+        // 跳过自己、没有地址的节点、正在握手的节点
+        if (node->flags & (REDIS_NODE_MYSELF|REDIS_NODE_NOADDR|REDIS_NODE_HANDSHAKE))
+            continue;
 
         /* Orphaned master check, useful only if the current instance
          * is a slave that may migrate to another master. */
@@ -3210,12 +3410,13 @@ void clusterCron(void) {
                 this_slaves = okslaves;
         }
 
-        /* If we are waiting for the PONG more than half the cluster
+        /*
+         * 尝试在判断超时之前重新连接
+         * If we are waiting for the PONG more than half the cluster
          * timeout, reconnect the link: maybe there is a connection
          * issue even if the node is alive. */
         if (node->link && /* is connected */
-            now - node->link->ctime >
-            server.cluster_node_timeout && /* was not already reconnected */
+            now - node->link->ctime > server.cluster_node_timeout && /* was not already reconnected */
             node->ping_sent && /* we already sent a ping */
             node->pong_received < node->ping_sent && /* still waiting pong */
             /* and we are waiting for the pong more than timeout/2 */
@@ -3225,24 +3426,23 @@ void clusterCron(void) {
             freeClusterLink(node->link);
         }
 
-        /* If we have currently no active ping in this instance, and the
+        /*
+         * 距离上次收到pong已经超过了 server.cluster_node_timeout 一般 则赶紧进行ping操作
+         * If we have currently no active ping in this instance, and the
          * received PONG is older than half the cluster timeout, send
          * a new ping now, to ensure all the nodes are pinged without
          * a too big delay. */
-        if (node->link &&
-            node->ping_sent == 0 &&
-            (now - node->pong_received) > server.cluster_node_timeout/2)
+        if (node->link && node->ping_sent == 0 && (now - node->pong_received) > server.cluster_node_timeout/2)
         {
             clusterSendPing(node->link, CLUSTERMSG_TYPE_PING);
             continue;
         }
 
-        /* If we are a master and one of the slaves requested a manual
+        /*
+         * 如果我们是主节点 且某个从节点请求手动故障转移 则需要持续的ping他
+         * If we are a master and one of the slaves requested a manual
          * failover, ping it continuously. */
-        if (server.cluster->mf_end &&
-            nodeIsMaster(myself) &&
-            server.cluster->mf_slave == node &&
-            node->link)
+        if (server.cluster->mf_end && nodeIsMaster(myself) && server.cluster->mf_slave == node && node->link)
         {
             clusterSendPing(node->link, CLUSTERMSG_TYPE_PING);
             continue;
@@ -3256,12 +3456,12 @@ void clusterCron(void) {
          * code at all. */
         delay = now - node->ping_sent;
 
+        // 如果超时则标记为失败
         if (delay > server.cluster_node_timeout) {
             /* Timeout reached. Set the node as possibly failing if it is
              * not already in this state. */
             if (!(node->flags & (REDIS_NODE_PFAIL|REDIS_NODE_FAIL))) {
-                redisLog(REDIS_DEBUG,"*** NODE %.40s possibly failing",
-                    node->name);
+                redisLog(REDIS_DEBUG,"*** NODE %.40s possibly failing", node->name);
                 node->flags |= REDIS_NODE_PFAIL;
                 update_state = 1;
             }
@@ -3272,10 +3472,7 @@ void clusterCron(void) {
     /* If we are a slave node but the replication is still turned off,
      * enable it if we know the address of our master and it appears to
      * be up. */
-    if (nodeIsSlave(myself) &&
-        server.masterhost == NULL &&
-        myself->slaveof &&
-        nodeHasAddr(myself->slaveof))
+    if (nodeIsSlave(myself) && server.masterhost == NULL && myself->slaveof && nodeHasAddr(myself->slaveof))
     {
         replicationSetMaster(myself->slaveof->ip, myself->slaveof->port);
     }
@@ -3316,8 +3513,7 @@ void clusterBeforeSleep(void) {
 
     /* Save the config, possibly using fsync. */
     if (server.cluster->todo_before_sleep & CLUSTER_TODO_SAVE_CONFIG) {
-        int fsync = server.cluster->todo_before_sleep &
-                    CLUSTER_TODO_FSYNC_CONFIG;
+        int fsync = server.cluster->todo_before_sleep & CLUSTER_TODO_FSYNC_CONFIG;
         clusterSaveConfigOrDie(fsync);
     }
 
@@ -3877,6 +4073,11 @@ void clusterReplyMultiBulkSlots(redisClient *c) {
     setDeferredMultiBulkLength(c, slot_replylen, num_masters);
 }
 
+/**
+ * cluster相关操作的命令入口
+ *
+ * @param c 提交集群命令客户端实例
+ */
 void clusterCommand(redisClient *c) {
     // 如果配置未开启集群模式则返回
     if (server.cluster_enabled == 0) {
@@ -3896,7 +4097,7 @@ void clusterCommand(redisClient *c) {
         }
 
 
-        // 开始集群连接握手 c->argv[2]->ptr 为提交的ip地址
+        // 开始集群连接握手 c->argv[2]->ptr 为提交的ip地址 握手成功之后本节点会和目标节点组成集群
         if (clusterStartHandshake(c->argv[2]->ptr,port) == 0 && errno == EINVAL)
         {
             addReplyErrorFormat(c,"Invalid node address specified: %s:%s", (char*)c->argv[2]->ptr, (char*)c->argv[3]->ptr);

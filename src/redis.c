@@ -982,8 +982,7 @@ void clientsCron(void) {
      * to process less than CLIENTS_CRON_MIN_ITERATIONS to meet our contract
      * of processing each client once per second. */
     if (iterations < CLIENTS_CRON_MIN_ITERATIONS)
-        iterations = (numclients < CLIENTS_CRON_MIN_ITERATIONS) ?
-                     numclients : CLIENTS_CRON_MIN_ITERATIONS;
+        iterations = (numclients < CLIENTS_CRON_MIN_ITERATIONS) ? numclients : CLIENTS_CRON_MIN_ITERATIONS;
 
     while(listLength(server.clients) && iterations--) {
         redisClient *c;
@@ -1076,6 +1075,13 @@ void updateCachedTime(void) {
  * a macro is used: run_with_period(milliseconds) { .... }
  */
 
+/**
+ * redis内置的定时事件
+ * @param eventLoop 事件循环实例
+ * @param id 事件id
+ * @param clientData 客户端实例
+ * @return
+ */
 int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     int j;
     REDIS_NOTUSED(eventLoop);
@@ -1086,15 +1092,16 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
      * handler if we don't return here fast enough. */
     if (server.watchdog_period) watchdogScheduleSignal(server.watchdog_period);
 
-    /* Update the time cache. */
+    /*
+     * 更新系统的时间缓存 减少系统调用获取系统时间
+     * Update the time cache.
+     */
     updateCachedTime();
 
     run_with_period(100) {
         trackInstantaneousMetric(REDIS_METRIC_COMMAND,server.stat_numcommands);
-        trackInstantaneousMetric(REDIS_METRIC_NET_INPUT,
-                server.stat_net_input_bytes);
-        trackInstantaneousMetric(REDIS_METRIC_NET_OUTPUT,
-                server.stat_net_output_bytes);
+        trackInstantaneousMetric(REDIS_METRIC_NET_INPUT, server.stat_net_input_bytes);
+        trackInstantaneousMetric(REDIS_METRIC_NET_OUTPUT, server.stat_net_output_bytes);
     }
 
     /* We have just REDIS_LRU_BITS bits per object for LRU information.
@@ -1110,11 +1117,15 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
      * REDIS_LRU_CLOCK_RESOLUTION define. */
     server.lruclock = getLRUClock();
 
-    /* Record the max memory used since the server was started. */
+    /*
+     * 记录最大内存使用量
+     * Record the max memory used since the server was started. */
     if (zmalloc_used_memory() > server.stat_peak_memory)
         server.stat_peak_memory = zmalloc_used_memory();
 
-    /* Sample the RSS here since this is a relatively slow call. */
+    /*
+     * 当前分配的内存大小采样
+     * Sample the RSS here since this is a relatively slow call. */
     server.resident_set_size = zmalloc_get_rss();
 
     /* We received a SIGTERM, shutting down here in a safe way, as it is
@@ -1125,7 +1136,9 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         server.shutdown_asap = 0;
     }
 
-    /* Show some info about non-empty databases */
+    /*
+     * 日志打印一些信息
+     * Show some info about non-empty databases */
     run_with_period(5000) {
         for (j = 0; j < server.dbnum; j++) {
             long long size, used, vkeys;
@@ -1140,7 +1153,9 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         }
     }
 
-    /* Show information about connected clients */
+    /*
+     * 周期性打印内存使用量
+     * Show information about connected clients */
     if (!server.sentinel_mode) {
         run_with_period(5000) {
             redisLog(REDIS_VERBOSE,
@@ -1151,16 +1166,19 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         }
     }
 
-    /* We need to do a few operations on clients asynchronously. */
+    /*
+     * 客户端管理定时任务
+     * We need to do a few operations on clients asynchronously. */
     clientsCron();
 
-    /* Handle background operations on Redis databases. */
+    /*
+     * 数据库管理定时任务
+     * Handle background operations on Redis databases. */
     databasesCron();
 
     /* Start a scheduled AOF rewrite if this was requested by the user while
      * a BGSAVE was in progress. */
-    if (server.rdb_child_pid == -1 && server.aof_child_pid == -1 &&
-        server.aof_rewrite_scheduled)
+    if (server.rdb_child_pid == -1 && server.aof_child_pid == -1 && server.aof_rewrite_scheduled)
     {
         rewriteAppendOnlyFileBackground();
     }
@@ -1256,7 +1274,9 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
      * to detect transfer failures. */
     run_with_period(1000) replicationCron();
 
-    /* Run the Redis Cluster cron. */
+    /*
+     * 集群管理
+     * Run the Redis Cluster cron. */
     run_with_period(100) {
         if (server.cluster_enabled) clusterCron();
     }
@@ -1419,6 +1439,7 @@ void initServerConfig(void) {
     server.configfile = NULL;
     server.hz = REDIS_DEFAULT_HZ;
     server.runid[REDIS_RUN_ID_SIZE] = '\0';
+    // 记住long的大小来判断操作系统是32位的还是64位的
     server.arch_bits = (sizeof(long) == 8) ? 64 : 32;
     server.port = REDIS_SERVERPORT;
     server.tcp_backlog = REDIS_TCP_BACKLOG;
@@ -1693,8 +1714,7 @@ int listenToPort(int port, int *fds, int *count) {
         if (server.bindaddr[j] == NULL) {
             /* Bind * for both IPv6 and IPv4, we enter here only if
              * server.bindaddr_count == 0. */
-            fds[*count] = anetTcp6Server(server.neterr,port,NULL,
-                server.tcp_backlog);
+            fds[*count] = anetTcp6Server(server.neterr,port,NULL, server.tcp_backlog);
             if (fds[*count] != ANET_ERR) {
                 anetNonBlock(NULL,fds[*count]);
                 (*count)++;
@@ -1711,14 +1731,14 @@ int listenToPort(int port, int *fds, int *count) {
              * otherwise fds[*count] will be ANET_ERR and we'll print an
              * error and return to the caller with an error. */
             if (*count == 2) break;
-        } else if (strchr(server.bindaddr[j],':')) {
+        }
+        else if (strchr(server.bindaddr[j],':')) {
             /* Bind IPv6 address. */
-            fds[*count] = anetTcp6Server(server.neterr,port,server.bindaddr[j],
-                server.tcp_backlog);
-        } else {
+            fds[*count] = anetTcp6Server(server.neterr,port,server.bindaddr[j], server.tcp_backlog);
+        }
+        else {
             /* Bind IPv4 address. */
-            fds[*count] = anetTcpServer(server.neterr,port,server.bindaddr[j],
-                server.tcp_backlog);
+            fds[*count] = anetTcpServer(server.neterr,port,server.bindaddr[j], server.tcp_backlog);
         }
         if (fds[*count] == ANET_ERR) {
             redisLog(REDIS_WARNING,
@@ -1763,23 +1783,39 @@ void resetServerStats(void) {
     server.aof_delayed_fsync = 0;
 }
 
+/**
+ * 初始化redis服务器
+ */
 void initServer(void) {
     int j;
 
+
+    // 处理退出信号
     signal(SIGHUP, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
     setupSignalHandlers();
 
+    // 启用syslog
     if (server.syslog_enabled) {
-        openlog(server.syslog_ident, LOG_PID | LOG_NDELAY | LOG_NOWAIT,
-            server.syslog_facility);
+        /*
+         * LOG_PID 打印中加入pid
+         * LOG_NDELAY 立即打开syslog连接
+         * LOG_NOWAIT
+         */
+        openlog(server.syslog_ident, LOG_PID | LOG_NDELAY | LOG_NOWAIT, server.syslog_facility);
     }
 
+    // 保存当前进程ID
     server.pid = getpid();
+    // 当前正在请求客户端
     server.current_client = NULL;
+    // 创建链表用于保存所有的客户端
     server.clients = listCreate();
+    // 创建链表用于保存需要异步关闭的客户端
     server.clients_to_close = listCreate();
+    // 创建链表用于保存所有的从节点
     server.slaves = listCreate();
+    // 创建链表用于保存所有的监视器
     server.monitors = listCreate();
     server.slaveseldb = -1; /* Force to emit the first SELECT command. */
     server.unblocked_clients = listCreate();
@@ -1788,17 +1824,26 @@ void initServer(void) {
     server.get_ack_from_slaves = 0;
     server.clients_paused = 0;
 
+
+    // 创建全局对象
     createSharedObjects();
+    // 调整文件句柄限制参数
     adjustOpenFilesLimit();
+    // 创建时间循环实例
     server.el = aeCreateEventLoop(server.maxclients+REDIS_EVENTLOOP_FDSET_INCR);
+
+    // 为数据库实例分配内存
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
 
-    /* Open the TCP listening socket for the user commands. */
-    if (server.port != 0 &&
-        listenToPort(server.port,server.ipfd,&server.ipfd_count) == REDIS_ERR)
+    /*
+     * 开启TCP监听
+     * Open the TCP listening socket for the user commands. */
+    if (server.port != 0 && listenToPort(server.port,server.ipfd,&server.ipfd_count) == REDIS_ERR)
         exit(1);
 
-    /* Open the listening Unix domain socket. */
+    /*
+     * 开启unixsocket监听
+     * Open the listening Unix domain socket. */
     if (server.unixsocket != NULL) {
         unlink(server.unixsocket); /* don't care if this fails */
         server.sofd = anetUnixServer(server.neterr,server.unixsocket,
@@ -1816,25 +1861,35 @@ void initServer(void) {
         exit(1);
     }
 
-    /* Create the Redis databases, and initialize other internal state. */
+    /*
+     * 创建数据库
+     * Create the Redis databases, and initialize other internal state. */
     for (j = 0; j < server.dbnum; j++) {
+        // 创建字典用于存放数据库数据
         server.db[j].dict = dictCreate(&dbDictType,NULL);
+        // 创建字典用于存放数据库的过期键
         server.db[j].expires = dictCreate(&keyptrDictType,NULL);
         server.db[j].blocking_keys = dictCreate(&keylistDictType,NULL);
         server.db[j].ready_keys = dictCreate(&setDictType,NULL);
+        // 创建字典用于存放数据库的watched键 key->client链表 （用于事务）
         server.db[j].watched_keys = dictCreate(&keylistDictType,NULL);
         server.db[j].eviction_pool = evictionPoolAlloc();
         server.db[j].id = j;
         server.db[j].avg_ttl = 0;
     }
+    // 创建用于发布订阅的存储结构
     server.pubsub_channels = dictCreate(&keylistDictType,NULL);
     server.pubsub_patterns = listCreate();
     listSetFreeMethod(server.pubsub_patterns,freePubsubPattern);
     listSetMatchMethod(server.pubsub_patterns,listMatchPubsubPattern);
+
+
     server.cronloops = 0;
+    // rdb和aof重写后台进程PID
     server.rdb_child_pid = -1;
     server.aof_child_pid = -1;
     server.rdb_child_type = REDIS_RDB_CHILD_TYPE_NONE;
+    // 初始化aof缓冲区
     aofRewriteBufferReset();
     server.aof_buf = sdsempty();
     server.lastsave = time(NULL); /* At startup we consider the DB saved. */
@@ -1853,27 +1908,35 @@ void initServer(void) {
     server.repl_good_slaves_count = 0;
     updateCachedTime();
 
-    /* Create the serverCron() time event, that's our main way to process
+    /*
+     * 创建时间时间serverCron
+     * Create the serverCron() time event, that's our main way to process
      * background operations. */
     if(aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR) {
         redisPanic("Can't create the serverCron time event.");
         exit(1);
     }
 
-    /* Create an event handler for accepting new connections in TCP and Unix
+    /*
+     * 创建TCP连接处理事件
+     * Create an event handler for accepting new connections in TCP and Unix
      * domain sockets. */
     for (j = 0; j < server.ipfd_count; j++) {
-        if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
-            acceptTcpHandler,NULL) == AE_ERR)
+        if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE, acceptTcpHandler,NULL) == AE_ERR)
             {
                 redisPanic(
                     "Unrecoverable error creating server.ipfd file event.");
             }
     }
+    /*
+     * 创建Unixsocket连接处理事件
+     */
     if (server.sofd > 0 && aeCreateFileEvent(server.el,server.sofd,AE_READABLE,
         acceptUnixHandler,NULL) == AE_ERR) redisPanic("Unrecoverable error creating server.sofd file event.");
 
-    /* Open the AOF file if needed. */
+    /*
+     * 如果开启了aof则需要打开用于保存aof文件的文件句柄
+     * Open the AOF file if needed. */
     if (server.aof_state == REDIS_AOF_ON) {
         server.aof_fd = open(server.aof_filename,
                                O_WRONLY|O_APPEND|O_CREAT,0644);
@@ -1884,7 +1947,9 @@ void initServer(void) {
         }
     }
 
-    /* 32 bit instances are limited to 4GB of address space, so if there is
+    /*
+     * 根据系统位来调整最大内存 因为32位机器最大内存为4G
+     * 32 bit instances are limited to 4GB of address space, so if there is
      * no explicit limit in the user provided configuration we set a limit
      * at 3 GB using maxmemory with 'noeviction' policy'. This avoids
      * useless crashes of the Redis instance for out of memory. */
@@ -1894,6 +1959,7 @@ void initServer(void) {
         server.maxmemory_policy = REDIS_MAXMEMORY_NO_EVICTION;
     }
 
+    // 如果开启集群模式则进行初始化
     if (server.cluster_enabled) clusterInit();
     replicationScriptCacheInit();
     scriptingInit();
@@ -3552,10 +3618,18 @@ void memtest(size_t megabytes, int passes);
 
 /* Returns 1 if there is --sentinel among the arguments or if
  * argv[0] is exactly "redis-sentinel". */
+/**
+ * 根据启动redis命令行参数来去顶是否是哨兵模式模式运行
+ * @param argc 命令行参数个数
+ * @param argv 命令行参数列表
+ * @return 返回结果 1表示已哨兵模式运行
+ */
 int checkForSentinelMode(int argc, char **argv) {
     int j;
 
+    // 第一个参数为redis-sentinel 则表示已哨兵模式运行
     if (strstr(argv[0],"redis-sentinel") != NULL) return 1;
+    // 后续参数中包含--sentinel 则表示已哨兵模式运行
     for (j = 1; j < argc; j++)
         if (!strcmp(argv[j],"--sentinel")) return 1;
     return 0;
@@ -3613,10 +3687,18 @@ int main(int argc, char **argv) {
     srand(time(NULL)^getpid());
     gettimeofday(&tv,NULL);
     dictSetHashFunctionSeed(tv.tv_sec^tv.tv_usec^getpid());
+    // 根据启动参数来确定是否已哨兵模式运行服务
     server.sentinel_mode = checkForSentinelMode(argc,argv);
+    // 初始化服务的默认配置
     initServerConfig();
 
-    /* We need to init sentinel right now as parsing the configuration file
+    /*
+     * 如果是哨兵模式启动需要进行额外的操作
+     * 1.将服务监听端口替换成哨兵特定端口
+     * 2.将服务的命令表替换成哨兵模式特有的命令表
+     * 3.初始化sentinelState实例
+     *
+     * We need to init sentinel right now as parsing the configuration file
      * in sentinel mode will have the effect of populating the sentinel
      * data structures with master nodes to monitor. */
     if (server.sentinel_mode) {
@@ -3624,16 +3706,21 @@ int main(int argc, char **argv) {
         initSentinel();
     }
 
+    // 处理启动命令行
     if (argc >= 2) {
         int j = 1; /* First option to parse in argv[] */
         sds options = sdsempty();
         char *configfile = NULL;
 
-        /* Handle special options --help and --version */
+        // 打印服务版本信息
         if (strcmp(argv[1], "-v") == 0 ||
             strcmp(argv[1], "--version") == 0) version();
+
+        // 打印服务帮助列表
         if (strcmp(argv[1], "--help") == 0 ||
             strcmp(argv[1], "-h") == 0) usage();
+
+
         if (strcmp(argv[1], "--test-memory") == 0) {
             if (argc == 3) {
                 memtest(atoi(argv[2]),50);
@@ -3645,10 +3732,14 @@ int main(int argc, char **argv) {
             }
         }
 
-        /* First argument is the config file name? */
+        /*
+         * 参数的第一位必须是配置文件名称
+         * First argument is the config file name? */
         if (argv[j][0] != '-' || argv[j][1] != '-')
             configfile = argv[j++];
-        /* All the other options are parsed and conceptually appended to the
+        /*
+         * 提取参数
+         * All the other options are parsed and conceptually appended to the
          * configuration file. For instance --port 6380 will generate the
          * string "port 6380\n" to be parsed after the actual file name
          * is parsed, if any. */
@@ -3665,15 +3756,18 @@ int main(int argc, char **argv) {
             }
             j++;
         }
+
         if (server.sentinel_mode && configfile && *configfile == '-') {
-            redisLog(REDIS_WARNING,
-                "Sentinel config from STDIN not allowed.");
-            redisLog(REDIS_WARNING,
-                "Sentinel needs config file on disk to save state.  Exiting...");
+            redisLog(REDIS_WARNING, "Sentinel config from STDIN not allowed.");
+            redisLog(REDIS_WARNING, "Sentinel needs config file on disk to save state.  Exiting...");
             exit(1);
         }
+
+        // 获取配置文件的绝对路径
         if (configfile) server.configfile = getAbsolutePath(configfile);
+        // 重置服务的持久化参数
         resetServerSaveParams();
+        // 从配置文件中加载服务参数
         loadServerConfig(configfile,options);
         sdsfree(options);
     } else {

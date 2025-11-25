@@ -60,23 +60,38 @@
     #endif
 #endif
 
+/**
+ * 创建时间循环实体
+ * @param setsize 创建时间循环的容量（允许的最大客户端（fd）容量）
+ * @return
+ */
 aeEventLoop *aeCreateEventLoop(int setsize) {
     aeEventLoop *eventLoop;
     int i;
 
+    // 分配内存
     if ((eventLoop = zmalloc(sizeof(*eventLoop))) == NULL) goto err;
+    // 分配内存数组用来存放event事件实体
     eventLoop->events = zmalloc(sizeof(aeFileEvent)*setsize);
+    // 分配内存数组用来存放需要处理的事件实体
     eventLoop->fired = zmalloc(sizeof(aeFiredEvent)*setsize);
     if (eventLoop->events == NULL || eventLoop->fired == NULL) goto err;
     eventLoop->setsize = setsize;
     eventLoop->lastTime = time(NULL);
+
+    // 时间时间链表头
     eventLoop->timeEventHead = NULL;
     eventLoop->timeEventNextId = 0;
+
     eventLoop->stop = 0;
     eventLoop->maxfd = -1;
     eventLoop->beforesleep = NULL;
+
+    // 创建多路复用IO实体
     if (aeApiCreate(eventLoop) == -1) goto err;
-    /* Events with mask == AE_NONE are not set. So let's initialize the
+    /*
+     * 初始化所有的事件状态
+     * Events with mask == AE_NONE are not set. So let's initialize the
      * vector with it. */
     for (i = 0; i < setsize; i++)
         eventLoop->events[i].mask = AE_NONE;
@@ -132,8 +147,7 @@ void aeStop(aeEventLoop *eventLoop) {
     eventLoop->stop = 1;
 }
 
-int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
-        aeFileProc *proc, void *clientData)
+int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask, aeFileProc *proc, void *clientData)
 {
     if (fd >= eventLoop->setsize) {
         errno = ERANGE;
@@ -144,9 +158,12 @@ int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
     if (aeApiAddEvent(eventLoop, fd, mask) == -1)
         return AE_ERR;
     fe->mask |= mask;
+    // 绑定处理器
     if (mask & AE_READABLE) fe->rfileProc = proc;
     if (mask & AE_WRITABLE) fe->wfileProc = proc;
+    // 保存客户端数据
     fe->clientData = clientData;
+    // 记录下最大的文件描述符
     if (fd > eventLoop->maxfd)
         eventLoop->maxfd = fd;
     return AE_OK;
@@ -177,19 +194,32 @@ int aeGetFileEvents(aeEventLoop *eventLoop, int fd) {
     return fe->mask;
 }
 
+/**
+ * 获取当前的秒级时间戳报错到seconds中 毫秒时间戳保存到milliseconds中
+ * @param seconds 当前秒计时间戳
+ * @param milliseconds 当前毫秒级时间戳
+ */
 static void aeGetTime(long *seconds, long *milliseconds)
 {
     struct timeval tv;
-
+    // 系统调用获取当前时间和毫秒时间戳
     gettimeofday(&tv, NULL);
     *seconds = tv.tv_sec;
     *milliseconds = tv.tv_usec/1000;
 }
 
+/**
+ * 根据传入的milliseconds计算下一次触发的时间戳和毫秒时间戳
+ * @param milliseconds 指定的毫秒时间戳
+ * @param sec 当前秒级时间戳
+ * @param ms 当前毫秒级时间戳
+ */
 static void aeAddMillisecondsToNow(long long milliseconds, long *sec, long *ms) {
     long cur_sec, cur_ms, when_sec, when_ms;
 
+    // 系统调用获取当前的时间戳
     aeGetTime(&cur_sec, &cur_ms);
+    // 计算下一次触发的时间戳和毫秒时间戳
     when_sec = cur_sec + milliseconds/1000;
     when_ms = cur_ms + milliseconds%1000;
     if (when_ms >= 1000) {
@@ -210,10 +240,12 @@ long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds,
     te = zmalloc(sizeof(*te));
     if (te == NULL) return AE_ERR;
     te->id = id;
+    // 计算下一次触发的时间戳和毫秒
     aeAddMillisecondsToNow(milliseconds,&te->when_sec,&te->when_ms);
     te->timeProc = proc;
     te->finalizerProc = finalizerProc;
     te->clientData = clientData;
+    // 头插
     te->next = eventLoop->timeEventHead;
     eventLoop->timeEventHead = te;
     return id;

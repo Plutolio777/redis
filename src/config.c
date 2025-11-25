@@ -573,11 +573,18 @@ loaderr:
  * Both filename and options can be NULL, in such a case are considered
  * empty. This way loadServerConfig can be used to just load a file or
  * just load a string. */
+/**
+ * 根据配置文件和命令行初始化服务器配置
+ * @param filename 配置文件绝度地址
+ * @param options 命令行传输的参数
+ */
 void loadServerConfig(char *filename, char *options) {
     sds config = sdsempty();
     char buf[REDIS_CONFIGLINE_MAX+1];
 
-    /* Load the file content */
+    /*
+     * 1.从配置文件中加载服务参数
+     * Load the file content */
     if (filename) {
         FILE *fp;
 
@@ -585,8 +592,7 @@ void loadServerConfig(char *filename, char *options) {
             fp = stdin;
         } else {
             if ((fp = fopen(filename,"r")) == NULL) {
-                redisLog(REDIS_WARNING,
-                    "Fatal error, can't open config file '%s'", filename);
+                redisLog(REDIS_WARNING, "Fatal error, can't open config file '%s'", filename);
                 exit(1);
             }
         }
@@ -594,11 +600,14 @@ void loadServerConfig(char *filename, char *options) {
             config = sdscat(config,buf);
         if (fp != stdin) fclose(fp);
     }
-    /* Append the additional options */
+    /*
+     * 2.将命令行参数拼接到配置文件内容中
+     * Append the additional options */
     if (options) {
         config = sdscat(config,"\n");
         config = sdscat(config,options);
     }
+    // 3.加载配置文件
     loadServerConfigFromString(config);
     sdsfree(config);
 }
